@@ -690,7 +690,7 @@ fn mkNumberTypeContent(self: *Self, type_name: []const u8, env: *Env) Allocator.
         self.builtin_ctx.module_name; // We're compiling Builtin module itself
 
     // Use fully-qualified type name "Builtin.Num.U8" etc.
-    // This allows method lookup to work correctly (getMethodIdent builds "Builtin.Num.U8.method_name")
+    // This allows method lookup to work correctly (resolveMethodByText builds "Builtin.Num.U8.method_name")
     const qualified_type_name = try std.fmt.allocPrint(self.gpa, "Builtin.Num.{s}", .{type_name});
     defer self.gpa.free(qualified_type_name);
     const type_name_ident = try @constCast(self.cir).insertIdent(base.Ident.for_text(qualified_type_name));

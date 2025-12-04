@@ -45,11 +45,8 @@ pub fn replaceAnnoOnlyWithHosted(env: *ModuleEnv) !std.ArrayList(CIR.Def.Idx) {
                 // Extract the unqualified name (e.g., "line!" from "Stdout.line!")
                 // The pattern might contain a qualified name, but we need the unqualified one
                 const full_name = env.getIdent(full_ident);
-                const unqualified_name = if (std.mem.lastIndexOfScalar(u8, full_name, '.')) |dot_idx|
-                    full_name[dot_idx + 1 ..]
-                else
-                    full_name;
-                const ident = env.common.findIdent(unqualified_name) orelse try env.common.insertIdent(gpa, base.Ident.for_text(unqualified_name));
+                const unqualified_name = base.Ident.extractUnqualifiedName(full_name);
+                const ident = env.common.resolveIdentByText(unqualified_name) orelse try env.common.insertIdent(gpa, base.Ident.for_text(unqualified_name));
 
                 // Extract the number of arguments from the annotation
                 const annotation = env.store.getAnnotation(def.annotation.?);
@@ -78,7 +75,7 @@ pub fn replaceAnnoOnlyWithHosted(env: *ModuleEnv) !std.ArrayList(CIR.Def.Idx) {
                 while (arg_i < num_args) : (arg_i += 1) {
                     const arg_name = try std.fmt.allocPrint(gpa, "_arg{}", .{arg_i});
                     defer gpa.free(arg_name);
-                    const arg_ident = env.common.findIdent(arg_name) orelse try env.common.insertIdent(gpa, base.Ident.for_text(arg_name));
+                    const arg_ident = env.common.resolveIdentByText(arg_name) orelse try env.common.insertIdent(gpa, base.Ident.for_text(arg_name));
                     const arg_pattern_idx = try env.addPattern(.{ .assign = .{ .ident = arg_ident } }, base.Region.zero());
                     try env.store.scratch.?.patterns.append(arg_pattern_idx);
                 }

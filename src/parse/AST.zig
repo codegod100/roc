@@ -2339,8 +2339,11 @@ pub const Expr = union(enum) {
         token: Token.Idx,
         region: TokenizedRegion,
     },
-    string_part: struct { // TODO: this should be more properly represented in its own union enum
+    string_part: struct {
         token: Token.Idx,
+        /// The processed string content (with escape sequences resolved).
+        /// Stored in CommonEnv.strings during tokenization.
+        string_literal: base.StringLiteral.Idx,
         region: TokenizedRegion,
     },
     string: StringLike,

@@ -598,6 +598,8 @@ pub fn addExpr(store: *NodeStore, expr: AST.Expr) std.mem.Allocator.Error!AST.Ex
             node.tag = .string_part;
             node.region = e.region;
             node.main_token = e.token;
+            // Store the processed string literal index in lhs
+            node.data.lhs = @intFromEnum(e.string_literal);
         },
         .string => |e| {
             node.tag = .string;
@@ -1551,6 +1553,7 @@ pub fn getExpr(store: *const NodeStore, expr_idx: AST.Expr.Idx) AST.Expr {
             return .{ .string_part = .{
                 .region = node.region,
                 .token = node.main_token,
+                .string_literal = @enumFromInt(node.data.lhs),
             } };
         },
         .string => {

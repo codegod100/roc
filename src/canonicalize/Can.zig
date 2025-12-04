@@ -3422,7 +3422,7 @@ fn introduceItemsAliased(
             // Check if the item is exposed by the module
             // We need to look up by string because the identifiers are from different modules
             // First, try to find this identifier in the target module's ident store
-            const is_exposed = if (module_env.common.findIdent(item_name_text)) |target_ident|
+            const is_exposed = if (module_env.common.resolveIdentByText(item_name_text)) |target_ident|
                 module_env.containsExposedById(target_ident)
             else
                 false;
@@ -3519,7 +3519,7 @@ fn introduceItemsUnaliased(
             const local_ident = exposed_item.alias orelse exposed_item.name;
             const local_name_text = self.env.getIdent(local_ident);
 
-            const target_ident = module_env.common.findIdent(self.env.getIdent(exposed_item.name));
+            const target_ident = module_env.common.resolveIdentByText(self.env.getIdent(exposed_item.name));
             const is_type_name = local_name_text.len > 0 and local_name_text[0] >= 'A' and local_name_text[0] <= 'Z';
 
             if (target_ident) |ident_in_module| {
@@ -3962,7 +3962,7 @@ pub fn canonicalizeExpr(
                                         const qualified_text = self.env.getIdent(type_qualified_idx);
 
                                         // Try to find the method in the Builtin module's exposed items
-                                        if (module_env.common.findIdent(qualified_text)) |qname_ident| {
+                                        if (module_env.common.resolveIdentByText(qualified_text)) |qname_ident| {
                                             if (module_env.getExposedNodeIndexById(qname_ident)) |target_node_idx| {
                                                 // Found it! This is a module-qualified lookup
                                                 // Need to get or create the auto-import for the Builtin module
@@ -4082,7 +4082,7 @@ pub fn canonicalizeExpr(
                                     } else field_text;
 
                                     // Look up the associated item by its name
-                                    const qname_ident = module_env.common.findIdent(lookup_name) orelse {
+                                    const qname_ident = module_env.common.resolveIdentByText(lookup_name) orelse {
                                         // Identifier not found - just return null
                                         // The error will be handled by the code below that checks target_node_idx_opt
                                         break :blk null;
@@ -4197,7 +4197,7 @@ pub fn canonicalizeExpr(
                             const target_node_idx_opt: ?u16 = if (self.module_envs) |envs_map| blk: {
                                 if (envs_map.get(exposed_info.module_name)) |auto_imported_type| {
                                     const module_env = auto_imported_type.env;
-                                    if (module_env.common.findIdent(field_text)) |target_ident| {
+                                    if (module_env.common.resolveIdentByText(field_text)) |target_ident| {
                                         break :blk module_env.getExposedNodeIndexById(target_ident);
                                     } else {
                                         break :blk null;
@@ -5890,7 +5890,7 @@ fn canonicalizeTagExpr(self: *Self, e: AST.TagExpr, mb_args: ?AST.Expr.Span, reg
                     } }), .free_vars = DataSpan.empty() };
                 };
                 const original_name_text = self.env.getIdent(exposed_info.original_name);
-                const target_ident = auto_imported_type.env.common.findIdent(original_name_text) orelse {
+                const target_ident = auto_imported_type.env.common.resolveIdentByText(original_name_text) orelse {
                     // Type identifier doesn't exist in the target module
                     return CanonicalizedExpr{ .idx = try self.env.pushMalformed(Expr.Idx, CIR.Diagnostic{ .type_not_exposed = .{
                         .module_name = module_name,
@@ -6058,7 +6058,7 @@ fn canonicalizeTagExpr(self: *Self, e: AST.TagExpr, mb_args: ?AST.Expr.Span, reg
                 break :blk 0;
             };
 
-            const target_ident = auto_imported_type.env.common.findIdent(type_name) orelse {
+            const target_ident = auto_imported_type.env.common.resolveIdentByText(type_name) orelse {
                 // Type is not exposed by the imported file
                 return CanonicalizedExpr{ .idx = try self.env.pushMalformed(Expr.Idx, CIR.Diagnostic{ .type_not_exposed = .{
                     .module_name = module_name,
@@ -6095,89 +6095,6 @@ fn canonicalizeTagExpr(self: *Self, e: AST.TagExpr, mb_args: ?AST.Expr.Span, reg
             .free_vars = free_vars_span,
         };
     }
-}
-
-/// Process escape sequences in a string, returning the processed string.
-/// Handles: \n, \r, \t, \\, \", \', \$, and \u(XXXX) unicode escapes.
-fn processEscapeSequences(allocator: std.mem.Allocator, input: []const u8) std.mem.Allocator.Error![]const u8 {
-    // Quick check: if no backslashes, return the input as-is
-    // Note: This is string content parsing, not identifier comparison
-    if (std.mem.indexOfScalar(u8, input, '\\') == null) {
-        return input;
-    }
-
-    var result = try std.ArrayList(u8).initCapacity(allocator, input.len);
-    var i: usize = 0;
-    while (i < input.len) {
-        if (input[i] == '\\' and i + 1 < input.len) {
-            const next = input[i + 1];
-            switch (next) {
-                'n' => {
-                    try result.append(allocator, '\n');
-                    i += 2;
-                },
-                'r' => {
-                    try result.append(allocator, '\r');
-                    i += 2;
-                },
-                't' => {
-                    try result.append(allocator, '\t');
-                    i += 2;
-                },
-                '\\' => {
-                    try result.append(allocator, '\\');
-                    i += 2;
-                },
-                '"' => {
-                    try result.append(allocator, '"');
-                    i += 2;
-                },
-                '\'' => {
-                    try result.append(allocator, '\'');
-                    i += 2;
-                },
-                '$' => {
-                    try result.append(allocator, '$');
-                    i += 2;
-                },
-                'u' => {
-                    // Unicode escape: \u(XXXX)
-                    if (i + 2 < input.len and input[i + 2] == '(') {
-                        // Find the closing paren (string content parsing)
-                        if (std.mem.indexOfScalarPos(u8, input, i + 3, ')')) |close_paren| {
-                            const hex_code = input[i + 3 .. close_paren];
-                            if (std.fmt.parseInt(u21, hex_code, 16)) |codepoint| {
-                                if (std.unicode.utf8ValidCodepoint(codepoint)) {
-                                    var buf: [4]u8 = undefined;
-                                    const len = std.unicode.utf8Encode(codepoint, &buf) catch {
-                                        // Invalid, keep original
-                                        try result.append(allocator, input[i]);
-                                        i += 1;
-                                        continue;
-                                    };
-                                    try result.appendSlice(allocator, buf[0..len]);
-                                    i = close_paren + 1;
-                                    continue;
-                                }
-                            } else |_| {}
-                        }
-                    }
-                    // Invalid unicode escape, keep original
-                    try result.append(allocator, input[i]);
-                    i += 1;
-                },
-                else => {
-                    // Unknown escape, keep as-is
-                    try result.append(allocator, input[i]);
-                    i += 1;
-                },
-            }
-        } else {
-            try result.append(allocator, input[i]);
-            i += 1;
-        }
-    }
-    return result.toOwnedSlice(allocator);
 }
 
 /// Helper function to create a string literal expression and add it to the scratch stack
@@ -6217,12 +6134,8 @@ fn extractStringSegments(self: *Self, parts: []const AST.Expr.Idx) std.mem.Alloc
         const part_node = self.parse_ir.store.getExpr(part);
         switch (part_node) {
             .string_part => |sp| {
-                // get the raw text of the string part and process escape sequences
-                const part_text = self.parse_ir.resolve(sp.token);
-                const processed_text = try processEscapeSequences(self.env.gpa, part_text);
-                defer if (processed_text.ptr != part_text.ptr) {
-                    self.env.gpa.free(processed_text);
-                };
+                // Get the pre-processed string from the tokenizer (escape sequences already resolved)
+                const processed_text = self.env.common.getString(sp.string_literal);
                 try self.addStringLiteralToScratch(processed_text, part_node.to_tokenized_region());
             },
             else => {
@@ -6248,13 +6161,9 @@ fn extractMultilineStringSegments(self: *Self, parts: []const AST.Expr.Idx) std.
                     try self.addStringLiteralToScratch("\n", .{ .start = last_string_part_end.?, .end = part_node.to_tokenized_region().start });
                 }
 
-                // Get and process the raw text of the string part (including escape sequences)
-                const part_text = self.parse_ir.resolve(sp.token);
-                if (part_text.len != 0) {
-                    const processed_text = try processEscapeSequences(self.env.gpa, part_text);
-                    defer if (processed_text.ptr != part_text.ptr) {
-                        self.env.gpa.free(processed_text);
-                    };
+                // Get the pre-processed string from the tokenizer (escape sequences already resolved)
+                const processed_text = self.env.common.getString(sp.string_literal);
+                if (processed_text.len != 0) {
                     try self.addStringLiteralToScratch(processed_text, part_node.to_tokenized_region());
                 }
                 last_string_part_end = part_node.to_tokenized_region().end;
@@ -6582,14 +6491,8 @@ fn canonicalizePattern(
                         const part = self.parse_ir.store.getExpr(parts[0]);
                         switch (part) {
                             .string_part => |sp| {
-                                // Get the actual string content from the string_part token
-                                const part_text = self.parse_ir.resolve(sp.token);
-
-                                // Process escape sequences
-                                const processed_text = try processEscapeSequences(self.env.gpa, part_text);
-                                defer if (processed_text.ptr != part_text.ptr) {
-                                    self.env.gpa.free(processed_text);
-                                };
+                                // Get the pre-processed string from the tokenizer (escape sequences already resolved)
+                                const processed_text = self.env.common.getString(sp.string_literal);
 
                                 const literal = try self.env.insertString(processed_text);
 
@@ -6755,7 +6658,7 @@ fn canonicalizePattern(
                         break :blk .{ 0, Content.err };
                     };
 
-                    const target_ident = auto_imported_type.env.common.findIdent(type_tok_text) orelse {
+                    const target_ident = auto_imported_type.env.common.resolveIdentByText(type_tok_text) orelse {
                         // Type is not exposed by the module
                         return try self.env.pushMalformed(Pattern.Idx, CIR.Diagnostic{ .type_not_exposed = .{
                             .module_name = module_name,
@@ -7200,16 +7103,24 @@ fn parseSmallDec(token_text: []const u8) ?struct { numerator: i16, denominator_p
         if (all_zeros) return null;
     }
 
-    // Parse as a whole number by removing the decimal point (numeric literal parsing)
-    const dot_pos = std.mem.indexOfScalar(u8, token_text, '.') orelse {
-        // No decimal point, parse as integer
+    // Find decimal point position using simple loop (numeric literal parsing)
+    const dot_pos: ?usize = blk: {
+        for (token_text, 0..) |c, i| {
+            if (c == '.') break :blk i;
+        }
+        break :blk null;
+    };
+
+    // If no decimal point, parse as integer
+    if (dot_pos == null) {
         const val = std.fmt.parseInt(i32, token_text, 10) catch return null;
         if (val < -32768 or val > 32767) return null;
         return .{ .numerator = @as(i16, @intCast(val)), .denominator_power_of_ten = 0 };
-    };
+    }
+    const decimal_pos = dot_pos.?;
 
     // Count digits after decimal point
-    const after_decimal_len = token_text.len - dot_pos - 1;
+    const after_decimal_len = token_text.len - decimal_pos - 1;
     if (after_decimal_len > 255) return null; // Too many decimal places
 
     // Build the string without the decimal point
@@ -7217,12 +7128,12 @@ fn parseSmallDec(token_text: []const u8) ?struct { numerator: i16, denominator_p
     var len: usize = 0;
 
     // Copy part before decimal
-    @memcpy(buf[0..dot_pos], token_text[0..dot_pos]);
-    len = dot_pos;
+    @memcpy(buf[0..decimal_pos], token_text[0..decimal_pos]);
+    len = decimal_pos;
 
     // Copy part after decimal
     if (after_decimal_len > 0) {
-        @memcpy(buf[len..][0..after_decimal_len], token_text[dot_pos + 1 ..]);
+        @memcpy(buf[len..][0..after_decimal_len], token_text[decimal_pos + 1 ..]);
         len += after_decimal_len;
     }
 
@@ -7885,7 +7796,7 @@ fn canonicalizeTypeAnnoBasicType(
                         if (envs_map.get(exposed_info.module_name)) |auto_imported_type| {
                             // Convert identifier from current module to target module's interner
                             const original_name_text = self.env.getIdent(exposed_info.original_name);
-                            const target_ident = auto_imported_type.env.common.findIdent(original_name_text) orelse {
+                            const target_ident = auto_imported_type.env.common.resolveIdentByText(original_name_text) orelse {
                                 // Type identifier doesn't exist in the target module
                                 return try self.env.pushMalformed(TypeAnno.Idx, CIR.Diagnostic{ .type_not_exposed = .{
                                     .module_name = exposed_info.module_name,
@@ -8002,7 +7913,7 @@ fn canonicalizeTypeAnnoBasicType(
                 break :blk 0;
             };
 
-            const target_ident = auto_imported_type.env.common.findIdent(type_name_text) orelse {
+            const target_ident = auto_imported_type.env.common.resolveIdentByText(type_name_text) orelse {
                 // Type is not exposed by the module
                 return try self.env.pushMalformed(TypeAnno.Idx, CIR.Diagnostic{ .type_not_exposed = .{
                     .module_name = module_name,
@@ -10490,10 +10401,10 @@ fn getOrCreateAutoImport(self: *Self, module_name_text: []const u8) std.mem.Allo
 /// Extract the module name from a full qualified name (e.g., "Json" from "json.Json")
 fn extractModuleName(self: *Self, module_name_ident: Ident.Idx) std.mem.Allocator.Error!Ident.Idx {
     const module_text = self.env.getIdent(module_name_ident);
+    const extracted_name = base.Ident.extractUnqualifiedName(module_text);
 
-    // Find the last dot and extract the part after it (qualified name parsing)
-    if (std.mem.lastIndexOfScalar(u8, module_text, '.')) |last_dot_idx| {
-        const extracted_name = module_text[last_dot_idx + 1 ..];
+    // If extractUnqualifiedName returns a different slice, we need to intern the extracted name
+    if (extracted_name.ptr != module_text.ptr) {
         return try self.env.insertIdent(base.Ident.for_text(extracted_name));
     } else {
         // No dot found, return the original name
@@ -10801,7 +10712,7 @@ fn tryModuleQualifiedLookup(self: *Self, field_access: AST.BinOp) std.mem.Alloca
     const target_node_idx_opt: ?u16 = if (self.module_envs) |envs_map| blk: {
         if (envs_map.get(module_name)) |auto_imported_type| {
             const module_env = auto_imported_type.env;
-            if (module_env.common.findIdent(field_text)) |target_ident| {
+            if (module_env.common.resolveIdentByText(field_text)) |target_ident| {
                 // Found the identifier in the module - check if it's exposed
                 break :blk module_env.getExposedNodeIndexById(target_ident);
             } else {
@@ -11013,7 +10924,6 @@ fn checkMainFunction(self: *Self) std.mem.Allocator.Error!MainFunctionStatus {
 /// Find the type declaration matching the module name and return its ident
 fn findMatchingTypeIdent(self: *Self) ?Ident.Idx {
     const file = self.parse_ir.store.getFile();
-    const module_name_text = self.env.module_name;
 
     // Look through all statements for a type declaration matching the module name
     for (self.parse_ir.store.statementSlice(file.statements)) |stmt_id| {

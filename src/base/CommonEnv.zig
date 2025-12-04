@@ -146,6 +146,20 @@ pub fn findIdent(self: *const CommonEnv, text: []const u8) ?Ident.Idx {
     return self.idents.findByString(text);
 }
 
+/// Looks up an identifier from another CommonEnv in this one.
+/// This is used for cross-module lookups where identifiers need to be resolved
+/// from one module's namespace to another's.
+pub fn resolveIdentFromOther(self: *const CommonEnv, other: *const CommonEnv, idx: Ident.Idx) ?Ident.Idx {
+    const text = other.getIdent(idx);
+    return self.idents.findByString(text);
+}
+
+/// Looks up an identifier by text in this store, returning its index if found.
+/// Used for cross-module identifier resolution when you have text from another module.
+pub fn resolveIdentByText(self: *const CommonEnv, text: []const u8) ?Ident.Idx {
+    return self.idents.findByString(text);
+}
+
 /// Retrieves the text of an identifier by its index.
 pub fn getIdent(self: *const CommonEnv, idx: Ident.Idx) []const u8 {
     return self.idents.getText(idx);

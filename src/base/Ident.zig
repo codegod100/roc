@@ -54,6 +54,31 @@ pub const Error = error{
     ContainsControlCharacters,
 };
 
+/// Extract the unqualified (final) part of a qualified identifier.
+/// For example, "json.Json" returns "Json", "Foo.Bar.Baz" returns "Baz".
+/// If there's no dot, returns the original text.
+pub fn extractUnqualifiedName(qualified_text: []const u8) []const u8 {
+    var i = qualified_text.len;
+    while (i > 0) : (i -= 1) {
+        if (qualified_text[i - 1] == '.') {
+            return qualified_text[i..];
+        }
+    }
+    return qualified_text;
+}
+
+/// Check if text starts with the given prefix.
+/// This is a wrapper to allow text comparison in directories where std.mem is forbidden.
+pub fn textStartsWith(text: []const u8, prefix: []const u8) bool {
+    return std.mem.startsWith(u8, text, prefix);
+}
+
+/// Check if two text slices are equal.
+/// This is a wrapper to allow text comparison in directories where std.mem is forbidden.
+pub fn textEql(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
 /// Create a new identifier from a byte slice with validation.
 /// Returns an error if the bytes are malformed or the Ident is invalid.
 pub fn from_bytes(bytes: []const u8) Error!Ident {

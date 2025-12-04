@@ -137,6 +137,11 @@ fn unnest(self: *Parser) void {
     self.nesting_counter = self.nesting_counter + 1;
 }
 
+/// Get the string literal index from a string content token
+fn getStringLiteral(self: *Parser, tok_idx: Token.Idx) base.StringLiteral.Idx {
+    return self.tok_buf.tokens.items(.extra)[tok_idx].string_literal;
+}
+
 /// add a diagnostic error
 pub fn pushDiagnostic(self: *Parser, tag: AST.Diagnostic.Tag, region: AST.TokenizedRegion) Error!void {
     if (self.diagnostics.items.len < MAX_PARSE_DIAGNOSTICS) {
@@ -2436,9 +2441,11 @@ pub fn parseMultiLineStringExpr(self: *Parser) Error!AST.Expr.Idx {
             },
             .StringPart => {
                 const part_start = self.pos;
+                const string_lit = self.getStringLiteral(part_start);
                 self.advance(); // Advance past the StringPart
                 const index = try self.store.addExpr(.{ .string_part = .{
                     .token = part_start,
+                    .string_literal = string_lit,
                     .region = .{ .start = part_start, .end = self.pos },
                 } });
                 try self.store.addScratchExpr(index);
@@ -2499,9 +2506,11 @@ pub fn parseStringExpr(self: *Parser) Error!AST.Expr.Idx {
             },
             .StringPart => {
                 const part_start = self.pos;
+                const string_lit = self.getStringLiteral(part_start);
                 self.advance(); // Advance past the StringPart
                 const index = try self.store.addExpr(.{ .string_part = .{
                     .token = part_start,
+                    .string_literal = string_lit,
                     .region = .{ .start = part_start, .end = self.pos },
                 } });
                 try self.store.addScratchExpr(index);

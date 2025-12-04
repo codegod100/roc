@@ -497,6 +497,7 @@ test "NodeStore round trip - Expr" {
         .string_part = .{
             .region = rand_region(),
             .token = rand_token_idx(),
+            .string_literal = rand_idx(base.StringLiteral.Idx),
         },
     });
     try expressions.append(gpa, AST.Expr{

@@ -25,6 +25,7 @@ pub const Token = struct {
     pub const Extra = union {
         interned: base.Ident.Idx,
         ident_with_flags: IdentWithFlags,
+        string_literal: base.StringLiteral.Idx,
         none: u32,
     };
 
@@ -348,6 +349,18 @@ pub const Token = struct {
             return switch (tok) {
                 .LowerIdent,
                 .NamedUnderscore,
+                => true,
+                else => false,
+            };
+        }
+
+        /// Returns true if this is a string content token that stores processed string literal content.
+        pub fn isStringContent(tok: Tag) bool {
+            return switch (tok) {
+                .StringPart,
+                .MalformedStringPart,
+                .MalformedInvalidUnicodeEscapeSequence,
+                .MalformedInvalidEscapeSequence,
                 => true,
                 else => false,
             };
@@ -1164,6 +1177,124 @@ pub const Tokenizer = struct {
         }
     }
 
+    /// Pushes a string content token with processed escape sequences.
+    fn pushTokenStringContent(self: *Tokenizer, gpa: std.mem.Allocator, tag: Token.Tag, tok_offset: Token.Idx) std.mem.Allocator.Error!void {
+        std.debug.assert(tag.isStringContent());
+
+        // Get the raw string content from source
+        const raw_text = self.cursor.buf[tok_offset..self.cursor.pos];
+
+        // Process escape sequences and store the result
+        const processed = try processEscapeSequences(gpa, raw_text);
+        defer if (processed.ptr != raw_text.ptr) gpa.free(processed);
+
+        // Insert into string literal store
+        const str_idx = try self.env.getStringStore().insert(gpa, processed);
+
+        try self.output.tokens.append(gpa, .{
+            .tag = tag,
+            .region = base.Region.from_raw_offsets(tok_offset, self.cursor.pos),
+            .extra = .{ .string_literal = str_idx },
+        });
+    }
+
+    /// Process escape sequences in a string, returning the processed string.
+    /// Handles: \n, \r, \t, \\, \", \', \$, and \u(XXXX) unicode escapes.
+    fn processEscapeSequences(allocator: std.mem.Allocator, input: []const u8) std.mem.Allocator.Error![]const u8 {
+        // Quick check: if no backslashes, return the input as-is
+        var has_backslash = false;
+        for (input) |c| {
+            if (c == '\\') {
+                has_backslash = true;
+                break;
+            }
+        }
+        if (!has_backslash) {
+            return input;
+        }
+
+        var result = try std.ArrayList(u8).initCapacity(allocator, input.len);
+        var i: usize = 0;
+        while (i < input.len) {
+            if (input[i] == '\\' and i + 1 < input.len) {
+                const next = input[i + 1];
+                switch (next) {
+                    'n' => {
+                        try result.append(allocator, '\n');
+                        i += 2;
+                    },
+                    'r' => {
+                        try result.append(allocator, '\r');
+                        i += 2;
+                    },
+                    't' => {
+                        try result.append(allocator, '\t');
+                        i += 2;
+                    },
+                    '\\' => {
+                        try result.append(allocator, '\\');
+                        i += 2;
+                    },
+                    '"' => {
+                        try result.append(allocator, '"');
+                        i += 2;
+                    },
+                    '\'' => {
+                        try result.append(allocator, '\'');
+                        i += 2;
+                    },
+                    '$' => {
+                        try result.append(allocator, '$');
+                        i += 2;
+                    },
+                    'u' => {
+                        // Unicode escape: \u(XXXX)
+                        if (i + 2 < input.len and input[i + 2] == '(') {
+                            // Find the closing paren
+                            var close_paren: ?usize = null;
+                            var j = i + 3;
+                            while (j < input.len) : (j += 1) {
+                                if (input[j] == ')') {
+                                    close_paren = j;
+                                    break;
+                                }
+                            }
+                            if (close_paren) |cp| {
+                                const hex_code = input[i + 3 .. cp];
+                                if (std.fmt.parseInt(u21, hex_code, 16)) |codepoint| {
+                                    if (std.unicode.utf8ValidCodepoint(codepoint)) {
+                                        var buf: [4]u8 = undefined;
+                                        const len = std.unicode.utf8Encode(codepoint, &buf) catch {
+                                            // Invalid, keep original
+                                            try result.append(allocator, input[i]);
+                                            i += 1;
+                                            continue;
+                                        };
+                                        try result.appendSlice(allocator, buf[0..len]);
+                                        i = cp + 1;
+                                        continue;
+                                    }
+                                } else |_| {}
+                            }
+                        }
+                        // Invalid unicode escape, keep original
+                        try result.append(allocator, input[i]);
+                        i += 1;
+                    },
+                    else => {
+                        // Unknown escape, keep as-is
+                        try result.append(allocator, input[i]);
+                        i += 1;
+                    },
+                }
+            } else {
+                try result.append(allocator, input[i]);
+                i += 1;
+            }
+        }
+        return result.toOwnedSlice(allocator);
+    }
+
     /// The main tokenize loop. This loops over the whole input buffer, tokenizing as it goes.
     pub fn tokenize(self: *Tokenizer, gpa: std.mem.Allocator) std.mem.Allocator.Error!void {
         const trace = tracy.trace(@src());
@@ -1616,14 +1747,14 @@ pub const Tokenizer = struct {
         while (self.cursor.pos < self.cursor.buf.len) {
             const c = self.cursor.buf[self.cursor.pos];
             if (c == '$' and self.cursor.peekAt(1) == open_curly) {
-                try self.pushTokenNormalHere(gpa, string_part_tag, start);
+                try self.pushTokenStringContent(gpa, string_part_tag, start);
                 const dollar_start = self.cursor.pos;
                 self.cursor.pos += 2;
                 try self.pushTokenNormalHere(gpa, .OpenStringInterpolation, dollar_start);
                 try self.string_interpolation_stack.append(kind);
                 return;
             } else if (c == '\n') {
-                try self.pushTokenNormalHere(gpa, string_part_tag, start);
+                try self.pushTokenStringContent(gpa, string_part_tag, start);
                 if (kind == .single_line) {
                     // Include the opening quote in the error region
                     self.cursor.pushMessage(.UnclosedString, @intCast(opening_quote_pos), @intCast(self.cursor.pos));
@@ -1631,7 +1762,7 @@ pub const Tokenizer = struct {
                 }
                 return;
             } else if (kind == .single_line and c == '"') {
-                try self.pushTokenNormalHere(gpa, string_part_tag, start);
+                try self.pushTokenStringContent(gpa, string_part_tag, start);
                 const string_part_end = self.cursor.pos;
                 self.cursor.pos += 1;
                 try self.pushTokenNormalHere(gpa, .StringEnd, string_part_end);
@@ -1652,7 +1783,7 @@ pub const Tokenizer = struct {
             // Include the opening quote in the error region
             self.cursor.pushMessage(.UnclosedString, @intCast(opening_quote_pos), @intCast(self.cursor.pos));
         }
-        try self.pushTokenNormalHere(gpa, string_part_tag, start);
+        try self.pushTokenStringContent(gpa, string_part_tag, start);
     }
 };
 

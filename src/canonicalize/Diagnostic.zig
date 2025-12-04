@@ -910,6 +910,7 @@ pub const Diagnostic = union(enum) {
     pub fn buildUndeclaredTypeReport(
         allocator: Allocator,
         type_name: []const u8,
+        is_qualified: bool,
         region_info: base.RegionInfo,
         filename: []const u8,
         source: []const u8,
@@ -918,11 +919,7 @@ pub const Diagnostic = union(enum) {
         var report = Report.init(allocator, "UNDECLARED TYPE", .runtime_error);
         const owned_type_name = try report.addOwnedString(type_name);
 
-        // Check if this looks like a qualified type (contains dots)
-        // TODO: Pass is_qualified from caller instead of inspecting string
-        const has_dots = std.mem.indexOfScalar(u8, type_name, '.') != null;
-
-        if (has_dots) {
+        if (is_qualified) {
             try report.document.addReflowingText("Cannot resolve qualified type ");
             try report.document.addType(owned_type_name);
             try report.document.addReflowingText(".");
@@ -1438,10 +1435,12 @@ pub const Diagnostic = union(enum) {
     }
 
     /// Build a report for "type not exposed" diagnostic
+    /// `is_same_name` should be true when module_name and type_name are the same (e.g., Try.Try)
     pub fn buildTypeNotExposedReport(
         allocator: Allocator,
         module_name: []const u8,
         type_name: []const u8,
+        is_same_name: bool,
         region_info: base.RegionInfo,
         filename: []const u8,
         source: []const u8,
@@ -1451,10 +1450,6 @@ pub const Diagnostic = union(enum) {
 
         const owned_module = try report.addOwnedString(module_name);
         const owned_type = try report.addOwnedString(type_name);
-
-        // Check if trying to access a type with the same name as the module (e.g., Try.Try)
-        // TODO: Pass Ident.Idx for both and compare indices instead
-        const is_same_name = std.mem.eql(u8, module_name, type_name);
 
         if (is_same_name) {
             // Special message for Try.Try, Color.Color, etc.

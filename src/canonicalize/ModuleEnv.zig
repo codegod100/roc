@@ -1473,16 +1473,14 @@ pub fn diagnosticToReport(self: *Self, diagnostic: CIR.Diagnostic, allocator: st
 
             var report = Report.init(allocator, "MISSING NESTED TYPE", .runtime_error);
 
-            const parent_bytes = self.getIdent(data.parent_name);
-            const parent_name = try report.addOwnedString(parent_bytes);
-
-            const nested_bytes = self.getIdent(data.nested_name);
-            const nested_name = try report.addOwnedString(nested_bytes);
+            const parent_name = try report.addOwnedString(self.getIdent(data.parent_name));
+            const nested_name = try report.addOwnedString(self.getIdent(data.nested_name));
 
             try report.document.addInlineCode(parent_name);
             try report.document.addReflowingText(" is in scope, but it doesn't have a nested type ");
 
-            if (std.mem.eql(u8, parent_bytes, nested_bytes)) {
+            // Compare indices directly (O(1)) instead of string bytes
+            if (data.parent_name == data.nested_name) {
                 // Say "also named" if the parent and nested types are equal, e.g. `Foo.Foo` - when
                 // this happens it can be kind of a confusing message if the message just says
                 // "Foo is in scope, but it doesn't have a nested type named Foo" compared to
@@ -2713,7 +2711,7 @@ pub fn insertQualifiedIdent(
 ///
 /// Returns the method's ident index if found, or null if the method doesn't exist.
 /// This is a read-only operation that doesn't modify the ident store.
-pub fn getMethodIdent(self: *const Self, type_name: []const u8, method_name: []const u8) ?Ident.Idx {
+pub fn resolveMethodByText(self: *const Self, type_name: []const u8, method_name: []const u8) ?Ident.Idx {
     // Build the qualified method name: "{type_name}.{method_name}"
     // The type_name may already include the module prefix (e.g., "Num.U64")
     // or just be the type name (e.g., "Bool" for Builtin.Bool)
@@ -2725,50 +2723,50 @@ pub fn getMethodIdent(self: *const Self, type_name: []const u8, method_name: []c
 
         // Check if type_name already starts with module_name
         if (type_name.len > self.module_name.len and
-            std.mem.startsWith(u8, type_name, self.module_name) and
+            Ident.textStartsWith(type_name, self.module_name) and
             type_name[self.module_name.len] == '.')
         {
             // Type name is already qualified (e.g., "Builtin.Bool")
             const qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ type_name, method_name }) catch return null;
-            return self.getIdentStoreConst().findByString(qualified);
-        } else if (std.mem.eql(u8, type_name, self.module_name)) {
+            return self.common.resolveIdentByText(qualified);
+        } else if (Ident.textEql(type_name, self.module_name)) {
             // Type name IS the module name (e.g., looking up method on "Builtin" itself)
             const qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ type_name, method_name }) catch return null;
-            return self.getIdentStoreConst().findByString(qualified);
+            return self.common.resolveIdentByText(qualified);
         } else {
             // Try module-qualified name first (e.g., "Builtin.Num.U64.from_numeral")
             const qualified = std.fmt.bufPrint(&buf, "{s}.{s}.{s}", .{ self.module_name, type_name, method_name }) catch return null;
-            if (self.getIdentStoreConst().findByString(qualified)) |idx| {
+            if (self.common.resolveIdentByText(qualified)) |idx| {
                 return idx;
             }
             // Fallback: try without module prefix (e.g., "Color.as_str" for app-defined types)
             // This handles the case where methods are registered with just the type-qualified name
             const simple_qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ type_name, method_name }) catch return null;
-            return self.getIdentStoreConst().findByString(simple_qualified);
+            return self.common.resolveIdentByText(simple_qualified);
         }
     } else {
         // Use heap allocation for large identifiers (rare case)
         // Try module-qualified name first
         const qualified = if (type_name.len > self.module_name.len and
-            std.mem.startsWith(u8, type_name, self.module_name) and
+            Ident.textStartsWith(type_name, self.module_name) and
             type_name[self.module_name.len] == '.')
             std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ type_name, method_name }) catch return null
-        else if (std.mem.eql(u8, type_name, self.module_name))
+        else if (Ident.textEql(type_name, self.module_name))
             std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ type_name, method_name }) catch return null
         else
             std.fmt.allocPrint(self.gpa, "{s}.{s}.{s}", .{ self.module_name, type_name, method_name }) catch return null;
         defer self.gpa.free(qualified);
-        if (self.getIdentStoreConst().findByString(qualified)) |idx| {
+        if (self.common.resolveIdentByText(qualified)) |idx| {
             return idx;
         }
         // Fallback for the module-qualified case
         if (type_name.len <= self.module_name.len or
-            !std.mem.startsWith(u8, type_name, self.module_name) or
+            !Ident.textStartsWith(type_name, self.module_name) or
             type_name[self.module_name.len] != '.')
         {
             const simple_qualified = std.fmt.allocPrint(self.gpa, "{s}.{s}", .{ type_name, method_name }) catch return null;
             defer self.gpa.free(simple_qualified);
-            return self.getIdentStoreConst().findByString(simple_qualified);
+            return self.common.resolveIdentByText(simple_qualified);
         }
         return null;
     }
@@ -2817,15 +2815,15 @@ pub fn lookupMethodIdentConst(self: *const Self, type_ident: Ident.Idx, method_i
 /// - method_ident: The method's identifier index in source_env
 ///
 /// Returns the qualified method's ident index if found, or null if the method doesn't exist.
-/// Falls back to string-based getMethodIdent for backward compatibility with pre-compiled modules.
+/// Falls back to string-based resolveMethodByText for backward compatibility with pre-compiled modules.
 pub fn lookupMethodIdentFromEnv(self: *Self, source_env: *const Self, type_ident: Ident.Idx, method_ident: Ident.Idx) ?Ident.Idx {
     // First, try to find the type and method idents in our own ident store
     const type_name = source_env.getIdent(type_ident);
     const method_name = source_env.getIdent(method_ident);
 
     // Find corresponding idents in this module
-    const local_type_ident = self.common.findIdent(type_name) orelse return null;
-    const local_method_ident = self.common.findIdent(method_name) orelse return null;
+    const local_type_ident = self.common.resolveIdentByText(type_name) orelse return null;
+    const local_method_ident = self.common.resolveIdentByText(method_name) orelse return null;
 
     // Try index-based lookup first (O(log n))
     if (self.lookupMethodIdent(local_type_ident, local_method_ident)) |result| {
@@ -2834,20 +2832,20 @@ pub fn lookupMethodIdentFromEnv(self: *Self, source_env: *const Self, type_ident
 
     // Fall back to string-based lookup for backward compatibility with pre-compiled modules
     // that don't have method_idents populated. This can be removed once all modules are recompiled.
-    return self.getMethodIdent(type_name, method_name);
+    return self.resolveMethodByText(type_name, method_name);
 }
 
 /// Const version of lookupMethodIdentFromEnv for use with immutable module environments.
 /// Safe to use on deserialized modules since method_idents is already sorted.
-/// Falls back to string-based getMethodIdent for backward compatibility with pre-compiled modules.
+/// Falls back to string-based resolveMethodByText for backward compatibility with pre-compiled modules.
 pub fn lookupMethodIdentFromEnvConst(self: *const Self, source_env: *const Self, type_ident: Ident.Idx, method_ident: Ident.Idx) ?Ident.Idx {
     // First, try to find the type and method idents in our own ident store
     const type_name = source_env.getIdent(type_ident);
     const method_name = source_env.getIdent(method_ident);
 
     // Find corresponding idents in this module
-    const local_type_ident = self.common.findIdent(type_name) orelse return null;
-    const local_method_ident = self.common.findIdent(method_name) orelse return null;
+    const local_type_ident = self.common.resolveIdentByText(type_name) orelse return null;
+    const local_method_ident = self.common.resolveIdentByText(method_name) orelse return null;
 
     // Try index-based lookup first (O(log n))
     if (self.lookupMethodIdentConst(local_type_ident, local_method_ident)) |result| {
@@ -2856,12 +2854,12 @@ pub fn lookupMethodIdentFromEnvConst(self: *const Self, source_env: *const Self,
 
     // Fall back to string-based lookup for backward compatibility with pre-compiled modules
     // that don't have method_idents populated. This can be removed once all modules are recompiled.
-    return self.getMethodIdent(type_name, method_name);
+    return self.resolveMethodByText(type_name, method_name);
 }
 
 /// Looks up a method identifier when the type and method idents come from different source environments.
 /// This is needed when e.g. type_ident is from runtime layout store and method_ident is from CIR.
-/// Falls back to string-based getMethodIdent for backward compatibility with pre-compiled modules.
+/// Falls back to string-based resolveMethodByText for backward compatibility with pre-compiled modules.
 pub fn lookupMethodIdentFromTwoEnvsConst(
     self: *const Self,
     type_source_env: *const Self,
@@ -2874,8 +2872,8 @@ pub fn lookupMethodIdentFromTwoEnvsConst(
     const method_name = method_source_env.getIdent(method_ident);
 
     // Find corresponding idents in this module
-    const local_type_ident = self.common.findIdent(type_name) orelse return null;
-    const local_method_ident = self.common.findIdent(method_name) orelse return null;
+    const local_type_ident = self.common.resolveIdentByText(type_name) orelse return null;
+    const local_method_ident = self.common.resolveIdentByText(method_name) orelse return null;
 
     // Try index-based lookup first (O(log n))
     if (self.lookupMethodIdentConst(local_type_ident, local_method_ident)) |result| {
@@ -2884,7 +2882,7 @@ pub fn lookupMethodIdentFromTwoEnvsConst(
 
     // Fall back to string-based lookup for backward compatibility with pre-compiled modules
     // that don't have method_idents populated. This can be removed once all modules are recompiled.
-    return self.getMethodIdent(type_name, method_name);
+    return self.resolveMethodByText(type_name, method_name);
 }
 
 /// Returns the line start positions for source code position mapping.
