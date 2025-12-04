@@ -14,6 +14,7 @@ const StringLiteral = @import("StringLiteral.zig");
 const RegionInfo = @import("RegionInfo.zig");
 const Region = @import("Region.zig");
 const SExprTree = @import("SExprTree.zig");
+const common_idents = @import("common_idents.zig");
 const SafeList = collections.SafeList;
 const ExposedItems = collections.ExposedItems;
 const CompactWriter = collections.CompactWriter;
@@ -33,8 +34,14 @@ line_starts: SafeList(u32),
 source: []const u8,
 
 pub fn init(gpa: std.mem.Allocator, source: []const u8) std.mem.Allocator.Error!CommonEnv {
+    var idents = try Ident.Store.initCapacity(gpa, 1024);
+
+    // Initialize common identifiers first to ensure they get deterministic indices.
+    // This must happen before any other identifiers are inserted.
+    try common_idents.initIdentStore(&idents, gpa);
+
     return CommonEnv{
-        .idents = try Ident.Store.initCapacity(gpa, 1024),
+        .idents = idents,
         .strings = try StringLiteral.Store.initCapacityBytes(gpa, 4096),
         .exposed_items = ExposedItems.init(),
         .line_starts = try SafeList(u32).initCapacity(gpa, 256),
@@ -388,8 +395,8 @@ test "CommonEnv.Serialized roundtrip with empty data" {
     const deserialized_ptr = @as(*CommonEnv.Serialized, @ptrCast(@alignCast(buffer.ptr)));
     const env = deserialized_ptr.deserialize(@as(i64, @intCast(@intFromPtr(buffer.ptr))), source);
 
-    // Verify empty state is preserved
-    try testing.expectEqual(@as(u32, 0), env.idents.interner.entry_count);
+    // Verify empty state is preserved (common idents are pre-populated)
+    try testing.expectEqual(@as(u32, common_idents.count), env.idents.interner.entry_count);
     try testing.expectEqual(@as(usize, 0), env.exposed_items.count());
     try testing.expectEqual(@as(usize, 0), env.line_starts.len());
     try testing.expectEqualStrings(source, env.source);
@@ -471,8 +478,8 @@ test "CommonEnv.Serialized roundtrip with large data" {
     const deserialized_ptr = @as(*CommonEnv.Serialized, @ptrCast(@alignCast(buffer.ptr)));
     const env = deserialized_ptr.deserialize(@as(i64, @intCast(@intFromPtr(buffer.ptr))), source);
 
-    // Verify large data was preserved
-    try testing.expectEqual(@as(u32, 50), env.idents.interner.entry_count);
+    // Verify large data was preserved (50 new idents + pre-populated common idents)
+    try testing.expectEqual(@as(u32, 50 + common_idents.count), env.idents.interner.entry_count);
     try testing.expectEqual(@as(usize, 3), env.exposed_items.count());
     try testing.expectEqual(@as(usize, 101), env.line_starts.len()); // 100 lines + 1 for first line at offset 0
     try testing.expectEqualStrings(source, env.source);

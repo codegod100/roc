@@ -72,10 +72,9 @@ test "addTypeVar - host opaque types compile to opaque_ptr" {
     lt.module_env = try ModuleEnv.init(lt.gpa, "");
     lt.type_store = try types_store.Store.init(lt.gpa);
 
-    // Set up builtin module ident and Box ident for Box recognition
-    const box_ident_idx = try lt.module_env.insertIdent(base.Ident.for_text("Box")); // Insert Box ident first
-    const builtin_module_idx = try lt.module_env.insertIdent(base.Ident.for_text("Builtin"));
-    lt.module_env.idents.builtin_module = builtin_module_idx;
+    // Use pre-populated common idents for Box recognition
+    const box_ident_idx = ModuleEnv.CommonIdents.box;
+    const builtin_module_idx = ModuleEnv.CommonIdents.builtin_module;
 
     lt.layout_store = try Store.init(&lt.module_env, &lt.type_store, null);
     lt.type_scope = TypeScope.init(lt.gpa);
@@ -105,12 +104,10 @@ test "addTypeVar - zero-sized types (ZST)" {
     lt.module_env = try ModuleEnv.init(lt.gpa, "");
     lt.type_store = try types_store.Store.init(lt.gpa);
 
-    // Setup identifiers BEFORE Store.init so list_ident and box_ident get set correctly
-    const list_ident_idx = try lt.module_env.insertIdent(Ident.for_text("List"));
-    const box_ident_idx = try lt.module_env.insertIdent(Ident.for_text("Box")); // Insert Box ident for box_ident lookup
-    const builtin_module_idx = try lt.module_env.insertIdent(Ident.for_text("Builtin"));
-    // Set the builtin_module_ident so the layout store can recognize Builtin types
-    lt.module_env.idents.builtin_module = builtin_module_idx;
+    // Use pre-populated common idents for List, Box, and Builtin recognition
+    const list_ident_idx = ModuleEnv.CommonIdents.list;
+    const box_ident_idx = ModuleEnv.CommonIdents.box;
+    const builtin_module_idx = ModuleEnv.CommonIdents.builtin_module;
 
     lt.layout_store = try Store.init(&lt.module_env, &lt.type_store, null);
     lt.type_scope = TypeScope.init(lt.gpa);
@@ -148,10 +145,9 @@ test "addTypeVar - record with only zero-sized fields" {
     lt.module_env = try ModuleEnv.init(lt.gpa, "");
     lt.type_store = try types_store.Store.init(lt.gpa);
 
-    // Set up builtin module ident and Box ident for Box recognition
-    const box_ident_idx = try lt.module_env.insertIdent(base.Ident.for_text("Box")); // Insert Box ident first
-    const builtin_module_idx = try lt.module_env.insertIdent(base.Ident.for_text("Builtin"));
-    lt.module_env.idents.builtin_module = builtin_module_idx;
+    // Use pre-populated common idents for Box recognition
+    const box_ident_idx = ModuleEnv.CommonIdents.box;
+    const builtin_module_idx = ModuleEnv.CommonIdents.builtin_module;
 
     lt.layout_store = try Store.init(&lt.module_env, &lt.type_store, null);
     lt.type_scope = TypeScope.init(lt.gpa);
@@ -204,12 +200,10 @@ test "deeply nested containers with inner ZST" {
     lt.module_env = try ModuleEnv.init(lt.gpa, "");
     lt.type_store = try types_store.Store.init(lt.gpa);
 
-    // Setup identifiers BEFORE Store.init so list_ident and box_ident get set correctly
-    const list_ident_idx = try lt.module_env.insertIdent(Ident.for_text("List"));
-    const box_ident_idx = try lt.module_env.insertIdent(Ident.for_text("Box")); // Insert Box ident for box_ident lookup
-    const builtin_module_idx = try lt.module_env.insertIdent(Ident.for_text("Builtin"));
-    // Set the builtin_module_ident so the layout store can recognize Builtin types
-    lt.module_env.idents.builtin_module = builtin_module_idx;
+    // Use pre-populated common idents for List, Box, and Builtin recognition
+    const list_ident_idx = ModuleEnv.CommonIdents.list;
+    const box_ident_idx = ModuleEnv.CommonIdents.box;
+    const builtin_module_idx = ModuleEnv.CommonIdents.builtin_module;
 
     lt.layout_store = try Store.init(&lt.module_env, &lt.type_store, null);
     lt.type_scope = TypeScope.init(lt.gpa);
@@ -258,12 +252,10 @@ test "nested ZST detection - List of record with ZST field" {
     lt.module_env = try ModuleEnv.init(lt.gpa, "");
     lt.type_store = try types_store.Store.init(lt.gpa);
 
-    // Setup identifiers BEFORE Store.init so list_ident and box_ident get set correctly
-    const list_ident_idx = try lt.module_env.insertIdent(Ident.for_text("List"));
-    _ = try lt.module_env.insertIdent(Ident.for_text("Box")); // Insert Box ident for box_ident lookup
-    const builtin_module_idx = try lt.module_env.insertIdent(Ident.for_text("Builtin"));
-    // Set the builtin_module_ident so the layout store can recognize Builtin types
-    lt.module_env.idents.builtin_module = builtin_module_idx;
+    // Use pre-populated common idents for List, Box, and Builtin recognition
+    const list_ident_idx = ModuleEnv.CommonIdents.list;
+    _ = ModuleEnv.CommonIdents.box; // box_ident used implicitly by Store.init
+    const builtin_module_idx = ModuleEnv.CommonIdents.builtin_module;
 
     lt.layout_store = try Store.init(&lt.module_env, &lt.type_store, null);
     lt.type_scope = TypeScope.init(lt.gpa);
@@ -289,10 +281,9 @@ test "nested ZST detection - Box of tuple with ZST elements" {
     lt.module_env = try ModuleEnv.init(lt.gpa, "");
     lt.type_store = try types_store.Store.init(lt.gpa);
 
-    // Set up builtin module ident and Box ident for Box recognition
-    const box_ident_idx = try lt.module_env.insertIdent(base.Ident.for_text("Box")); // Insert Box ident first
-    const builtin_module_idx = try lt.module_env.insertIdent(base.Ident.for_text("Builtin"));
-    lt.module_env.idents.builtin_module = builtin_module_idx;
+    // Use pre-populated common idents for Box recognition
+    const box_ident_idx = ModuleEnv.CommonIdents.box;
+    const builtin_module_idx = ModuleEnv.CommonIdents.builtin_module;
 
     lt.layout_store = try Store.init(&lt.module_env, &lt.type_store, null);
     lt.type_scope = TypeScope.init(lt.gpa);
@@ -321,12 +312,10 @@ test "nested ZST detection - deeply nested" {
     lt.module_env = try ModuleEnv.init(lt.gpa, "");
     lt.type_store = try types_store.Store.init(lt.gpa);
 
-    // Setup identifiers BEFORE Store.init so list_ident and box_ident get set correctly
-    const list_ident_idx = try lt.module_env.insertIdent(Ident.for_text("List"));
-    _ = try lt.module_env.insertIdent(Ident.for_text("Box")); // Insert Box ident for box_ident lookup
-    const builtin_module_idx = try lt.module_env.insertIdent(Ident.for_text("Builtin"));
-    // Set the builtin_module_ident so the layout store can recognize Builtin types
-    lt.module_env.idents.builtin_module = builtin_module_idx;
+    // Use pre-populated common idents for List, Box, and Builtin recognition
+    const list_ident_idx = ModuleEnv.CommonIdents.list;
+    _ = ModuleEnv.CommonIdents.box; // box_ident used implicitly by Store.init
+    const builtin_module_idx = ModuleEnv.CommonIdents.builtin_module;
 
     lt.layout_store = try Store.init(&lt.module_env, &lt.type_store, null);
     lt.type_scope = TypeScope.init(lt.gpa);

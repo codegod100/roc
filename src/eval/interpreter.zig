@@ -417,7 +417,7 @@ pub const Interpreter = struct {
         };
 
         // Use the pre-interned "Builtin.Str" identifier from the module env
-        result.runtime_layout_store = try layout.Store.init(env, result.runtime_types, env.idents.builtin_str);
+        result.runtime_layout_store = try layout.Store.init(env, result.runtime_types, can.ModuleEnv.CommonIdents.builtin_str);
 
         // Build translated_module_envs for runtime method lookups
         // This maps module names in runtime_layout_store.env's ident space to their ModuleEnvs
@@ -1536,8 +1536,8 @@ pub const Interpreter = struct {
                 var ok_index: ?usize = null;
                 var err_index: ?usize = null;
 
-                const ok_ident = self.env.idents.ok;
-                const err_ident = self.env.idents.err;
+                const ok_ident = can.ModuleEnv.CommonIdents.ok;
+                const err_ident = can.ModuleEnv.CommonIdents.err;
 
                 for (tag_list.items, 0..) |tag_info, i| {
                     if (tag_info.name == ok_ident) {
@@ -1582,11 +1582,11 @@ pub const Interpreter = struct {
                         var dest = try self.pushRaw(result_layout, 0);
                         var acc = try dest.asRecord(&self.runtime_layout_store);
 
-                        const tag_field_idx = acc.findFieldIndex(self.env.idents.tag) orelse {
+                        const tag_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse {
                             self.triggerCrash("str_from_utf8: tag field not found", false, roc_ops);
                             return error.Crash;
                         };
-                        const payload_field_idx = acc.findFieldIndex(self.env.idents.payload) orelse {
+                        const payload_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload) orelse {
                             self.triggerCrash("str_from_utf8: payload field not found", false, roc_ops);
                             return error.Crash;
                         };
@@ -1674,7 +1674,7 @@ pub const Interpreter = struct {
                             if (inner_payload.layout.tag == .record) {
                                 var inner_acc = try inner_payload.asRecord(&self.runtime_layout_store);
                                 // Set problem field (tag union represented as u8)
-                                if (inner_acc.findFieldIndex(self.env.idents.problem)) |problem_idx| {
+                                if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.problem)) |problem_idx| {
                                     const problem_field = try inner_acc.getFieldByIndex(problem_idx);
                                     if (problem_field.ptr) |ptr| {
                                         const typed_ptr: *u8 = @ptrCast(@alignCast(ptr));
@@ -1682,7 +1682,7 @@ pub const Interpreter = struct {
                                     }
                                 }
                                 // Set index field (U64)
-                                if (inner_acc.findFieldIndex(self.env.idents.index)) |index_idx| {
+                                if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.index)) |index_idx| {
                                     const index_field = try inner_acc.getFieldByIndex(index_idx);
                                     if (index_field.ptr) |ptr| {
                                         const typed_ptr: *u64 = @ptrCast(@alignCast(ptr));
@@ -1700,7 +1700,7 @@ pub const Interpreter = struct {
                         } else if (payload_field.layout.tag == .record) {
                             // Payload is a record with tag and payload for BadUtf8
                             var err_rec = try payload_field.asRecord(&self.runtime_layout_store);
-                            if (err_rec.findFieldIndex(self.env.idents.tag)) |tag_idx| {
+                            if (err_rec.findFieldIndex(can.ModuleEnv.CommonIdents.tag)) |tag_idx| {
                                 const inner_tag = try err_rec.getFieldByIndex(tag_idx);
                                 if (inner_tag.layout.tag == .scalar and inner_tag.layout.data.scalar.tag == .int) {
                                     var tmp = inner_tag;
@@ -1708,18 +1708,18 @@ pub const Interpreter = struct {
                                     try tmp.setInt(0); // BadUtf8 is index 0
                                 }
                             }
-                            if (err_rec.findFieldIndex(self.env.idents.payload)) |inner_payload_idx| {
+                            if (err_rec.findFieldIndex(can.ModuleEnv.CommonIdents.payload)) |inner_payload_idx| {
                                 const inner_payload = try err_rec.getFieldByIndex(inner_payload_idx);
                                 if (inner_payload.layout.tag == .record) {
                                     var inner_acc = try inner_payload.asRecord(&self.runtime_layout_store);
-                                    if (inner_acc.findFieldIndex(self.env.idents.problem)) |problem_idx| {
+                                    if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.problem)) |problem_idx| {
                                         const problem_field = try inner_acc.getFieldByIndex(problem_idx);
                                         if (problem_field.ptr) |ptr| {
                                             const typed_ptr: *u8 = @ptrCast(@alignCast(ptr));
                                             typed_ptr.* = @intFromEnum(result.problem_code);
                                         }
                                     }
-                                    if (inner_acc.findFieldIndex(self.env.idents.index)) |index_idx| {
+                                    if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.index)) |index_idx| {
                                         const index_field = try inner_acc.getFieldByIndex(index_idx);
                                         if (index_field.ptr) |ptr| {
                                             const typed_ptr: *u64 = @ptrCast(@alignCast(ptr));
@@ -1737,11 +1737,11 @@ pub const Interpreter = struct {
                         var dest = try self.pushRaw(result_layout, 0);
                         var acc = try dest.asRecord(&self.runtime_layout_store);
 
-                        const tag_field_idx = acc.findFieldIndex(self.env.idents.tag) orelse {
+                        const tag_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse {
                             self.triggerCrash("str_from_utf8: tag field not found", false, roc_ops);
                             return error.Crash;
                         };
-                        const payload_field_idx = acc.findFieldIndex(self.env.idents.payload) orelse {
+                        const payload_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload) orelse {
                             self.triggerCrash("str_from_utf8: payload field not found", false, roc_ops);
                             return error.Crash;
                         };
@@ -1761,14 +1761,14 @@ pub const Interpreter = struct {
                             const inner_payload = try err_tuple.getElement(0);
                             if (inner_payload.layout.tag == .record) {
                                 var inner_acc = try inner_payload.asRecord(&self.runtime_layout_store);
-                                if (inner_acc.findFieldIndex(self.env.idents.problem)) |problem_idx| {
+                                if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.problem)) |problem_idx| {
                                     const problem_field = try inner_acc.getFieldByIndex(problem_idx);
                                     if (problem_field.ptr) |ptr| {
                                         const typed_ptr: *u8 = @ptrCast(@alignCast(ptr));
                                         typed_ptr.* = @intFromEnum(result.problem_code);
                                     }
                                 }
-                                if (inner_acc.findFieldIndex(self.env.idents.index)) |index_idx| {
+                                if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.index)) |index_idx| {
                                     const index_field = try inner_acc.getFieldByIndex(index_idx);
                                     if (index_field.ptr) |ptr| {
                                         const typed_ptr: *u64 = @ptrCast(@alignCast(ptr));
@@ -1784,7 +1784,7 @@ pub const Interpreter = struct {
                             }
                         } else if (outer_payload.layout.tag == .record) {
                             var err_rec = try outer_payload.asRecord(&self.runtime_layout_store);
-                            if (err_rec.findFieldIndex(self.env.idents.tag)) |inner_tag_idx| {
+                            if (err_rec.findFieldIndex(can.ModuleEnv.CommonIdents.tag)) |inner_tag_idx| {
                                 const inner_tag = try err_rec.getFieldByIndex(inner_tag_idx);
                                 if (inner_tag.layout.tag == .scalar and inner_tag.layout.data.scalar.tag == .int) {
                                     var tmp = inner_tag;
@@ -1792,18 +1792,18 @@ pub const Interpreter = struct {
                                     try tmp.setInt(0);
                                 }
                             }
-                            if (err_rec.findFieldIndex(self.env.idents.payload)) |inner_payload_idx| {
+                            if (err_rec.findFieldIndex(can.ModuleEnv.CommonIdents.payload)) |inner_payload_idx| {
                                 const inner_payload = try err_rec.getFieldByIndex(inner_payload_idx);
                                 if (inner_payload.layout.tag == .record) {
                                     var inner_acc = try inner_payload.asRecord(&self.runtime_layout_store);
-                                    if (inner_acc.findFieldIndex(self.env.idents.problem)) |problem_idx| {
+                                    if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.problem)) |problem_idx| {
                                         const problem_field = try inner_acc.getFieldByIndex(problem_idx);
                                         if (problem_field.ptr) |ptr| {
                                             const typed_ptr: *u8 = @ptrCast(@alignCast(ptr));
                                             typed_ptr.* = @intFromEnum(result.problem_code);
                                         }
                                     }
-                                    if (inner_acc.findFieldIndex(self.env.idents.index)) |index_idx| {
+                                    if (inner_acc.findFieldIndex(can.ModuleEnv.CommonIdents.index)) |index_idx| {
                                         const index_field = try inner_acc.getFieldByIndex(index_idx);
                                         if (index_field.ptr) |ptr| {
                                             const typed_ptr: *u64 = @ptrCast(@alignCast(ptr));
@@ -1865,7 +1865,7 @@ pub const Interpreter = struct {
                                     // Write problem field
                                     if (self.runtime_layout_store.getRecordFieldOffsetByName(
                                         record_layout.data.record.idx,
-                                        self.env.idents.problem,
+                                        can.ModuleEnv.CommonIdents.problem,
                                     )) |problem_offset| {
                                         const problem_ptr: *u8 = @ptrCast(@alignCast(ptr_u8 + problem_offset));
                                         problem_ptr.* = @intFromEnum(result.problem_code);
@@ -1874,7 +1874,7 @@ pub const Interpreter = struct {
                                     // Write index field
                                     if (self.runtime_layout_store.getRecordFieldOffsetByName(
                                         record_layout.data.record.idx,
-                                        self.env.idents.index,
+                                        can.ModuleEnv.CommonIdents.index,
                                     )) |index_offset| {
                                         const index_ptr: *u64 = @ptrCast(@alignCast(ptr_u8 + index_offset));
                                         index_ptr.* = result.byte_index;
@@ -3020,8 +3020,8 @@ pub const Interpreter = struct {
                 var ok_payload_var: ?types.Var = null;
 
                 // Use precomputed idents from the module env for direct comparison instead of string matching
-                const ok_ident = self.env.idents.ok;
-                const err_ident = self.env.idents.err;
+                const ok_ident = can.ModuleEnv.CommonIdents.ok;
+                const err_ident = can.ModuleEnv.CommonIdents.err;
 
                 for (tag_list.items, 0..) |tag_info, i| {
                     if (tag_info.name == ok_ident) {
@@ -3070,8 +3070,8 @@ pub const Interpreter = struct {
                     var dest = try self.pushRaw(result_layout, 0);
                     var acc = try dest.asRecord(&self.runtime_layout_store);
                     // Layout should guarantee tag and payload fields exist - if not, it's a compiler bug
-                    const tag_field_idx = acc.findFieldIndex(self.env.idents.tag) orelse unreachable;
-                    const payload_field_idx = acc.findFieldIndex(self.env.idents.payload) orelse unreachable;
+                    const tag_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse unreachable;
+                    const payload_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload) orelse unreachable;
 
                     // Write tag discriminant
                     const tag_field = try acc.getFieldByIndex(tag_field_idx);
@@ -3147,20 +3147,17 @@ pub const Interpreter = struct {
                 // Argument should be a record - if not, it's a compiler bug
                 var acc = num_literal_arg.asRecord(&self.runtime_layout_store) catch unreachable;
 
-                // Get is_negative field
-                // Use runtime_layout_store.env for field lookups since the record was built with that env's idents
-                const layout_env = self.runtime_layout_store.env;
-                // Field lookups should succeed - missing fields is a compiler bug
-                const is_neg_idx = acc.findFieldIndex(layout_env.idents.is_negative) orelse unreachable;
+                // Get is_negative field - lookups should succeed since missing fields is a compiler bug
+                const is_neg_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.is_negative) orelse unreachable;
                 const is_neg_field = acc.getFieldByIndex(is_neg_idx) catch unreachable;
                 const is_negative = getRuntimeU8(is_neg_field) != 0;
 
                 // Get digits_before_pt field (List(U8))
-                const before_idx = acc.findFieldIndex(layout_env.idents.digits_before_pt) orelse unreachable;
+                const before_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.digits_before_pt) orelse unreachable;
                 const before_field = acc.getFieldByIndex(before_idx) catch unreachable;
 
                 // Get digits_after_pt field (List(U8))
-                const after_idx = acc.findFieldIndex(layout_env.idents.digits_after_pt) orelse unreachable;
+                const after_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.digits_after_pt) orelse unreachable;
                 const after_field = acc.getFieldByIndex(after_idx) catch unreachable;
 
                 // Extract list data from digits_before_pt
@@ -3208,8 +3205,8 @@ pub const Interpreter = struct {
                 var err_payload_var: ?types.Var = null;
 
                 // Use precomputed idents from the module env for direct comparison instead of string matching
-                const ok_ident = self.env.idents.ok;
-                const err_ident = self.env.idents.err;
+                const ok_ident = can.ModuleEnv.CommonIdents.ok;
+                const err_ident = can.ModuleEnv.CommonIdents.err;
 
                 for (tag_list.items, 0..) |tag_info, i| {
                     if (tag_info.name == ok_ident) {
@@ -3374,8 +3371,8 @@ pub const Interpreter = struct {
                     var result_acc = try dest.asRecord(&self.runtime_layout_store);
                     // Use layout_env for field lookups since record fields use layout store's env idents
                     // Layout should guarantee tag and payload fields exist - if not, it's a compiler bug
-                    const tag_field_idx = result_acc.findFieldIndex(layout_env.idents.tag) orelse unreachable;
-                    const payload_field_idx = result_acc.findFieldIndex(layout_env.idents.payload) orelse unreachable;
+                    const tag_field_idx = result_acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse unreachable;
+                    const payload_field_idx = result_acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload) orelse unreachable;
 
                     // Write tag discriminant
                     const tag_field = try result_acc.getFieldByIndex(tag_field_idx);
@@ -3539,7 +3536,7 @@ pub const Interpreter = struct {
 
                                     // Set the tag to InvalidNumeral (index 0, assuming it's the first/only tag)
                                     // Use layout store's env for field lookup to match comptime_evaluator
-                                    if (err_acc.findFieldIndex(layout_env.idents.tag)) |inner_tag_idx| {
+                                    if (err_acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag)) |inner_tag_idx| {
                                         const inner_tag_field = try err_acc.getFieldByIndex(inner_tag_idx);
                                         if (inner_tag_field.layout.tag == .scalar and inner_tag_field.layout.data.scalar.tag == .int) {
                                             var inner_tmp = inner_tag_field;
@@ -3549,7 +3546,7 @@ pub const Interpreter = struct {
                                     }
 
                                     // Set the payload to the Str
-                                    if (err_acc.findFieldIndex(layout_env.idents.payload)) |inner_payload_idx| {
+                                    if (err_acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload)) |inner_payload_idx| {
                                         const inner_payload_field = try err_acc.getFieldByIndex(inner_payload_idx);
                                         if (inner_payload_field.ptr) |str_ptr| {
                                             const str_dest: *RocStr = @ptrCast(@alignCast(str_ptr));
@@ -4321,8 +4318,8 @@ pub const Interpreter = struct {
         var ok_index: ?usize = null;
         var err_index: ?usize = null;
 
-        const ok_ident = self.env.idents.ok;
-        const err_ident = self.env.idents.err;
+        const ok_ident = can.ModuleEnv.CommonIdents.ok;
+        const err_ident = can.ModuleEnv.CommonIdents.err;
 
         for (tag_list.items, 0..) |tag_info, i| {
             if (tag_info.name == ok_ident) {
@@ -4346,8 +4343,8 @@ pub const Interpreter = struct {
             var dest = try self.pushRaw(result_layout, 0);
             var acc = try dest.asRecord(&self.runtime_layout_store);
             // Layout should guarantee tag and payload fields exist - if not, it's a compiler bug
-            const tag_field_idx = acc.findFieldIndex(self.env.idents.tag) orelse unreachable;
-            const payload_field_idx = acc.findFieldIndex(self.env.idents.payload) orelse unreachable;
+            const tag_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse unreachable;
+            const payload_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload) orelse unreachable;
 
             // Write tag discriminant
             const tag_field = try acc.getFieldByIndex(tag_field_idx);
@@ -4870,7 +4867,7 @@ pub const Interpreter = struct {
         defer tag_list.deinit();
         try self.appendUnionTags(result_rt_var, &tag_list);
 
-        const ok_ident = self.env.idents.ok;
+        const ok_ident = can.ModuleEnv.CommonIdents.ok;
         for (tag_list.items) |tag_info| {
             if (tag_info.name == ok_ident) {
                 const arg_vars = self.runtime_types.sliceVars(tag_info.args);
@@ -4893,8 +4890,8 @@ pub const Interpreter = struct {
 
         var ok_index: ?usize = null;
         var err_index: ?usize = null;
-        const ok_ident = self.env.idents.ok;
-        const err_ident = self.env.idents.err;
+        const ok_ident = can.ModuleEnv.CommonIdents.ok;
+        const err_ident = can.ModuleEnv.CommonIdents.err;
 
         for (tag_list.items, 0..) |tag_info, i| {
             if (tag_info.name == ok_ident) {
@@ -4963,9 +4960,8 @@ pub const Interpreter = struct {
         if (result_layout.tag == .record) {
             var dest = try self.pushRaw(result_layout, 0);
             var result_acc = try dest.asRecord(&self.runtime_layout_store);
-            const layout_env = self.runtime_layout_store.env;
-            const tag_field_idx = result_acc.findFieldIndex(layout_env.idents.tag) orelse unreachable;
-            const payload_field_idx = result_acc.findFieldIndex(layout_env.idents.payload) orelse unreachable;
+            const tag_field_idx = result_acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse unreachable;
+            const payload_field_idx = result_acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload) orelse unreachable;
 
             // Write tag discriminant
             const tag_field = try result_acc.getFieldByIndex(tag_field_idx);
@@ -5780,7 +5776,7 @@ pub const Interpreter = struct {
         const method_func = self.resolveMethodFunction(
             nom.origin_module,
             nom.ident.ident_idx,
-            self.root_env.idents.is_eq,
+            can.ModuleEnv.CommonIdents.is_eq,
             roc_ops,
         ) catch |err| {
             // If method lookup fails, we can't compare this type
@@ -5989,7 +5985,7 @@ pub const Interpreter = struct {
             },
             .record => {
                 var acc = try value.asRecord(&self.runtime_layout_store);
-                const tag_field_idx = acc.findFieldIndex(self.env.idents.tag) orelse return error.TypeMismatch;
+                const tag_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse return error.TypeMismatch;
                 const tag_field = try acc.getFieldByIndex(tag_field_idx);
                 var tag_index: usize = undefined;
                 if (tag_field.layout.tag == .scalar and tag_field.layout.data.scalar.tag == .int) {
@@ -5998,7 +5994,7 @@ pub const Interpreter = struct {
                 } else return error.TypeMismatch;
 
                 var payload_value: ?StackValue = null;
-                if (acc.findFieldIndex(self.env.idents.payload)) |payload_idx| {
+                if (acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload)) |payload_idx| {
                     payload_value = try acc.getFieldByIndex(payload_idx);
                     if (payload_value) |field_value| {
                         var tag_list = std.array_list.AlignedManaged(types.Tag, null).init(self.allocator);
@@ -6241,7 +6237,7 @@ pub const Interpreter = struct {
         const maybe_method = self.tryResolveMethodByIdent(
             nom.origin_module,
             nom.ident.ident_idx,
-            self.env.idents.to_inspect,
+            can.ModuleEnv.CommonIdents.to_inspect,
             roc_ops,
         ) catch return null;
 
@@ -6780,7 +6776,7 @@ pub const Interpreter = struct {
             return self.builtin_module_env orelse self.env;
         }
         // Also check original builtin ident for non-translated case
-        if (origin_module == self.root_env.idents.builtin_module) {
+        if (origin_module == can.ModuleEnv.CommonIdents.builtin_module) {
             return self.builtin_module_env orelse self.env;
         }
 
@@ -6984,7 +6980,7 @@ pub const Interpreter = struct {
 
     /// Create List(Str) type for runtime type propagation
     fn mkListStrTypeRuntime(self: *Interpreter) !types.Var {
-        const origin_module_id = self.root_env.idents.builtin_module;
+        const origin_module_id = can.ModuleEnv.CommonIdents.builtin_module;
 
         // Create Builtin.Str type for the element
         const str_type_name = "Builtin.Str";
@@ -7026,7 +7022,7 @@ pub const Interpreter = struct {
     /// Create nominal number type content for runtime types (e.g., Dec, I64, F64)
     fn mkNumberTypeContentRuntime(self: *Interpreter, type_name: []const u8) !types.Content {
         // Use root_env.idents for consistent module reference
-        const origin_module_id = self.root_env.idents.builtin_module;
+        const origin_module_id = can.ModuleEnv.CommonIdents.builtin_module;
 
         // Use fully-qualified type name "Builtin.Num.U8" etc.
         // This allows method lookup to work correctly.
@@ -9093,17 +9089,17 @@ pub const Interpreter = struct {
                     else => {
                         // Arithmetic and comparison operations: desugar to method calls
                         const method_ident: base_pkg.Ident.Idx = switch (binop.op) {
-                            .add => self.root_env.idents.plus,
-                            .sub => self.root_env.idents.minus,
-                            .mul => self.root_env.idents.times,
-                            .div => self.root_env.idents.div_by,
-                            .div_trunc => self.root_env.idents.div_trunc_by,
-                            .rem => self.root_env.idents.rem_by,
-                            .lt => self.root_env.idents.is_lt,
-                            .le => self.root_env.idents.is_lte,
-                            .gt => self.root_env.idents.is_gt,
-                            .ge => self.root_env.idents.is_gte,
-                            .eq, .ne => self.root_env.idents.is_eq,
+                            .add => can.ModuleEnv.CommonIdents.plus,
+                            .sub => can.ModuleEnv.CommonIdents.minus,
+                            .mul => can.ModuleEnv.CommonIdents.times,
+                            .div => can.ModuleEnv.CommonIdents.div_by,
+                            .div_trunc => can.ModuleEnv.CommonIdents.div_trunc_by,
+                            .rem => can.ModuleEnv.CommonIdents.rem_by,
+                            .lt => can.ModuleEnv.CommonIdents.is_lt,
+                            .le => can.ModuleEnv.CommonIdents.is_lte,
+                            .gt => can.ModuleEnv.CommonIdents.is_gt,
+                            .ge => can.ModuleEnv.CommonIdents.is_gte,
+                            .eq, .ne => can.ModuleEnv.CommonIdents.is_eq,
                             .@"and", .@"or" => unreachable, // handled above
                         };
 
@@ -9552,7 +9548,7 @@ pub const Interpreter = struct {
                 // Handle flex types for True/False
                 // Note: We also need to handle non-flex Bool types that might come from
                 // type inference (e.g., in `if True then ...` the condition has Bool type)
-                const is_bool_tag = tag.name == self.env.idents.true_tag or tag.name == self.env.idents.false_tag;
+                const is_bool_tag = tag.name == can.ModuleEnv.CommonIdents.true_tag or tag.name == can.ModuleEnv.CommonIdents.false_tag;
                 if (is_bool_tag) {
                     // Always use canonical Bool for True/False to ensure consistent layout
                     rt_var = try self.getCanonicalBoolRuntimeVar();
@@ -9925,7 +9921,7 @@ pub const Interpreter = struct {
 
                 // Schedule: first evaluate operand, then apply method
                 try work_stack.push(.{ .apply_continuation = .{ .unary_op_apply = .{
-                    .method_ident = self.root_env.idents.negate,
+                    .method_ident = can.ModuleEnv.CommonIdents.negate,
                     .operand_rt_var = operand_rt_var,
                 } } });
                 try work_stack.push(.{ .eval_expr = .{
@@ -9949,7 +9945,7 @@ pub const Interpreter = struct {
 
                 // Schedule: first evaluate operand, then apply method
                 try work_stack.push(.{ .apply_continuation = .{ .unary_op_apply = .{
-                    .method_ident = self.root_env.idents.not,
+                    .method_ident = can.ModuleEnv.CommonIdents.not,
                     .operand_rt_var = operand_rt_var,
                 } } });
                 try work_stack.push(.{ .eval_expr = .{
@@ -10241,7 +10237,7 @@ pub const Interpreter = struct {
             // Record { tag: Discriminant, payload: ZST }
             var dest = try self.pushRaw(layout_val, 0);
             var acc = try dest.asRecord(&self.runtime_layout_store);
-            const tag_idx = acc.findFieldIndex(self.env.idents.tag) orelse {
+            const tag_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse {
                 self.triggerCrash("e_zero_argument_tag: tag field not found", false, roc_ops);
                 return error.Crash;
             };
@@ -10288,7 +10284,7 @@ pub const Interpreter = struct {
         if (layout_val.tag == .record) {
             var dest = try self.pushRaw(layout_val, 0);
             var acc = try dest.asRecord(&self.runtime_layout_store);
-            const tag_field_idx = acc.findFieldIndex(self.env.idents.tag) orelse {
+            const tag_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse {
                 self.triggerCrash("e_tag: tag field not found", false, roc_ops);
                 return error.Crash;
             };
@@ -11629,12 +11625,12 @@ pub const Interpreter = struct {
                         // Record layout { tag, payload }
                         var dest = try self.pushRaw(layout_val, 0);
                         var acc = try dest.asRecord(&self.runtime_layout_store);
-                        const tag_field_idx = acc.findFieldIndex(self.env.idents.tag) orelse {
+                        const tag_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.tag) orelse {
                             for (values) |v| v.decref(&self.runtime_layout_store, roc_ops);
                             self.triggerCrash("e_tag: tag field not found", false, roc_ops);
                             return error.Crash;
                         };
-                        const payload_field_idx = acc.findFieldIndex(self.env.idents.payload) orelse {
+                        const payload_field_idx = acc.findFieldIndex(can.ModuleEnv.CommonIdents.payload) orelse {
                             for (values) |v| v.decref(&self.runtime_layout_store, roc_ops);
                             self.triggerCrash("e_tag: payload field not found", false, roc_ops);
                             return error.Crash;
@@ -12018,7 +12014,7 @@ pub const Interpreter = struct {
                         .nominal_type => |nom| try self.tryResolveMethodByIdent(
                             nom.origin_module,
                             nom.ident.ident_idx,
-                            self.env.idents.to_inspect,
+                            can.ModuleEnv.CommonIdents.to_inspect,
                             roc_ops,
                         ),
                         else => null,
@@ -12729,7 +12725,7 @@ pub const Interpreter = struct {
                         },
                         .record, .tuple, .tag_union, .empty_record, .empty_tag_union => blk: {
                             // Anonymous structural types have implicit is_eq
-                            if (ba.method_ident == self.root_env.idents.is_eq) {
+                            if (ba.method_ident == can.ModuleEnv.CommonIdents.is_eq) {
                                 var result = self.valuesStructurallyEqual(lhs, ba.receiver_rt_var, rhs, ba.rhs_rt_var, roc_ops) catch |err| {
                                     if (err == error.NotImplemented) {
                                         self.triggerCrash("Structural equality not implemented for this type", false, roc_ops);
@@ -12752,7 +12748,7 @@ pub const Interpreter = struct {
                     // for all numeric types and generic type parameters with is_eq constraints.
                     // Error types can occur during generic instantiation when types couldn't be resolved.
                     .flex, .rigid, .err => blk: {
-                        if (ba.method_ident == self.root_env.idents.is_eq) {
+                        if (ba.method_ident == can.ModuleEnv.CommonIdents.is_eq) {
                             var result = self.valuesStructurallyEqual(lhs, ba.receiver_rt_var, rhs, ba.rhs_rt_var, roc_ops) catch |err| {
                                 if (err == error.NotImplemented) {
                                     self.triggerCrash("Structural equality not implemented for this type", false, roc_ops);
@@ -13555,7 +13551,7 @@ pub const Interpreter = struct {
                         .nominal_type => |nom| try self.tryResolveMethodByIdent(
                             nom.origin_module,
                             nom.ident.ident_idx,
-                            self.env.idents.to_inspect,
+                            can.ModuleEnv.CommonIdents.to_inspect,
                             roc_ops,
                         ),
                         else => null,

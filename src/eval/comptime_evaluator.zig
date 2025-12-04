@@ -730,7 +730,7 @@ pub const ComptimeEvaluator = struct {
             // Step 2: Look up the from_numeral method for this nominal type
             // Get the module where the type is defined
             const origin_module_ident = nominal_type.origin_module;
-            const is_builtin = origin_module_ident == self.env.idents.builtin_module;
+            const is_builtin = origin_module_ident == ModuleEnv.CommonIdents.builtin_module;
 
             const origin_env: *const ModuleEnv = if (is_builtin) blk: {
                 break :blk self.interpreter.builtin_module_env orelse {
@@ -1238,9 +1238,9 @@ pub const ComptimeEvaluator = struct {
             digits_after_pt.layout,
         };
         const field_names = [_]base.Ident.Idx{
-            self.env.idents.is_negative,
-            self.env.idents.digits_before_pt,
-            self.env.idents.digits_after_pt,
+            ModuleEnv.CommonIdents.is_negative,
+            ModuleEnv.CommonIdents.digits_before_pt,
+            ModuleEnv.CommonIdents.digits_after_pt,
         };
 
         const record_layout_idx = try self.interpreter.runtime_layout_store.putRecord(self.env, &field_layouts, &field_names);
@@ -1250,13 +1250,13 @@ pub const ComptimeEvaluator = struct {
         var accessor = try dest.asRecord(&self.interpreter.runtime_layout_store);
 
         // Use self.env for field lookups since the record was built with self.env's idents
-        const is_neg_idx = accessor.findFieldIndex(self.env.idents.is_negative) orelse return error.OutOfMemory;
+        const is_neg_idx = accessor.findFieldIndex(ModuleEnv.CommonIdents.is_negative) orelse return error.OutOfMemory;
         try accessor.setFieldByIndex(is_neg_idx, is_negative, roc_ops);
 
-        const before_pt_idx = accessor.findFieldIndex(self.env.idents.digits_before_pt) orelse return error.OutOfMemory;
+        const before_pt_idx = accessor.findFieldIndex(ModuleEnv.CommonIdents.digits_before_pt) orelse return error.OutOfMemory;
         try accessor.setFieldByIndex(before_pt_idx, digits_before_pt, roc_ops);
 
-        const after_pt_idx = accessor.findFieldIndex(self.env.idents.digits_after_pt) orelse return error.OutOfMemory;
+        const after_pt_idx = accessor.findFieldIndex(ModuleEnv.CommonIdents.digits_after_pt) orelse return error.OutOfMemory;
         try accessor.setFieldByIndex(after_pt_idx, digits_after_pt, roc_ops);
 
         return dest;
@@ -1316,9 +1316,7 @@ pub const ComptimeEvaluator = struct {
             return true; // Unknown format, optimistically allow
         } else if (result.layout.tag == .record) {
             var accessor = result.asRecord(&self.interpreter.runtime_layout_store) catch return true;
-            // Use layout store's env for field lookups since records use that env's idents
-            const layout_env = self.interpreter.runtime_layout_store.env;
-            const tag_idx = accessor.findFieldIndex(layout_env.idents.tag) orelse return true;
+            const tag_idx = accessor.findFieldIndex(ModuleEnv.CommonIdents.tag) orelse return true;
             const tag_field = accessor.getFieldByIndex(tag_idx) catch return true;
 
             if (tag_field.layout.tag == .scalar and tag_field.layout.data.scalar.tag == .int) {
@@ -1395,9 +1393,7 @@ pub const ComptimeEvaluator = struct {
         _ = region;
 
         // Get the payload field from the Try record
-        // Use layout store's env for field lookups
-        const layout_env = self.interpreter.runtime_layout_store.env;
-        const payload_idx = try_accessor.findFieldIndex(layout_env.idents.payload) orelse {
+        const payload_idx = try_accessor.findFieldIndex(ModuleEnv.CommonIdents.payload) orelse {
             // This should never happen - Try type must have a payload field
             return try std.fmt.allocPrint(self.allocator, "Internal error: from_numeral returned malformed Try value (missing payload field)", .{});
         };
@@ -1415,7 +1411,7 @@ pub const ComptimeEvaluator = struct {
 
             // Check if this has a payload field (for the Str)
             // Single-tag unions might not have a "tag" field, so we look for payload first
-            if (err_accessor.findFieldIndex(layout_env.idents.payload)) |err_payload_idx| {
+            if (err_accessor.findFieldIndex(ModuleEnv.CommonIdents.payload)) |err_payload_idx| {
                 const err_payload = err_accessor.getFieldByIndex(err_payload_idx) catch {
                     return try std.fmt.allocPrint(self.allocator, "Internal error: could not access InvalidNumeral payload", .{});
                 };

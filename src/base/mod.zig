@@ -19,6 +19,7 @@ pub const FunctionArgs = @import("PackedDataSpan.zig").FunctionArgs;
 pub const SmallCollections = @import("PackedDataSpan.zig").SmallCollections;
 
 pub const CommonEnv = @import("CommonEnv.zig");
+pub const common_idents = @import("common_idents.zig");
 
 test {
     _ = @import("Ident.zig");
@@ -147,6 +148,7 @@ pub const Allocators = struct {
 };
 
 test "base tests" {
+    std.testing.refAllDecls(@import("common_idents.zig"));
     std.testing.refAllDecls(@import("CommonEnv.zig"));
     std.testing.refAllDecls(@import("DataSpan.zig"));
     std.testing.refAllDecls(@import("Ident.zig"));

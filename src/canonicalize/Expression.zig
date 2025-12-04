@@ -1426,7 +1426,7 @@ pub const Expr = union(enum) {
                 // Special case: Builtin module is an implementation detail, print as (builtin)
                 // Use index comparison instead of string comparison
                 const is_builtin = if (ir.imports.getIdentIdx(e.module_idx)) |ident|
-                    ident.idx == ir.idents.builtin_module.idx
+                    ident.idx == ModuleEnv.CommonIdents.builtin_module.idx
                 else
                     false;
 
@@ -1628,7 +1628,7 @@ pub const Expr = union(enum) {
                 // Special case: Builtin module is an implementation detail, print as (builtin)
                 // Use index comparison instead of string comparison
                 const is_builtin = if (ir.imports.getIdentIdx(e.module_idx)) |ident|
-                    ident.idx == ir.idents.builtin_module.idx
+                    ident.idx == ModuleEnv.CommonIdents.builtin_module.idx
                 else
                     false;
 

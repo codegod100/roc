@@ -180,22 +180,22 @@ pub const Store = struct {
             .layouts_by_var = layouts_by_var,
             .work = try Work.initCapacity(env.gpa, 32),
             .builtin_str_ident = builtin_str_ident,
-            .builtin_str_plain_ident = env.idents.str,
-            .list_ident = env.idents.list,
-            .box_ident = env.idents.box,
-            .u8_ident = env.idents.u8_type,
-            .i8_ident = env.idents.i8_type,
-            .u16_ident = env.idents.u16_type,
-            .i16_ident = env.idents.i16_type,
-            .u32_ident = env.idents.u32_type,
-            .i32_ident = env.idents.i32_type,
-            .u64_ident = env.idents.u64_type,
-            .i64_ident = env.idents.i64_type,
-            .u128_ident = env.idents.u128_type,
-            .i128_ident = env.idents.i128_type,
-            .f32_ident = env.idents.f32_type,
-            .f64_ident = env.idents.f64_type,
-            .dec_ident = env.idents.dec_type,
+            .builtin_str_plain_ident = ModuleEnv.CommonIdents.str,
+            .list_ident = ModuleEnv.CommonIdents.list,
+            .box_ident = ModuleEnv.CommonIdents.box,
+            .u8_ident = ModuleEnv.CommonIdents.u8_type,
+            .i8_ident = ModuleEnv.CommonIdents.i8_type,
+            .u16_ident = ModuleEnv.CommonIdents.u16_type,
+            .i16_ident = ModuleEnv.CommonIdents.i16_type,
+            .u32_ident = ModuleEnv.CommonIdents.u32_type,
+            .i32_ident = ModuleEnv.CommonIdents.i32_type,
+            .u64_ident = ModuleEnv.CommonIdents.u64_type,
+            .i64_ident = ModuleEnv.CommonIdents.i64_type,
+            .u128_ident = ModuleEnv.CommonIdents.u128_type,
+            .i128_ident = ModuleEnv.CommonIdents.i128_type,
+            .f32_ident = ModuleEnv.CommonIdents.f32_type,
+            .f64_ident = ModuleEnv.CommonIdents.f64_type,
+            .dec_ident = ModuleEnv.CommonIdents.dec_type,
         };
     }
 
@@ -967,7 +967,7 @@ pub const Store = struct {
                             if (self.builtin_str_ident) |builtin_str| {
                                 if (nominal_type.ident.ident_idx == builtin_str) break :blk true;
                             }
-                            if (nominal_type.origin_module == self.env.idents.builtin_module) {
+                            if (nominal_type.origin_module == ModuleEnv.CommonIdents.builtin_module) {
                                 if (self.builtin_str_plain_ident) |plain_str| {
                                     if (nominal_type.ident.ident_idx == plain_str) break :blk true;
                                 }
@@ -981,7 +981,7 @@ pub const Store = struct {
 
                         // Special handling for Builtin.Box
                         const is_builtin_box = if (self.box_ident) |box_ident|
-                            nominal_type.origin_module == self.env.idents.builtin_module and
+                            nominal_type.origin_module == ModuleEnv.CommonIdents.builtin_module and
                                 nominal_type.ident.ident_idx == box_ident
                         else
                             false;
@@ -1021,7 +1021,7 @@ pub const Store = struct {
 
                         // Special handling for Builtin.List
                         const is_builtin_list = if (self.list_ident) |list_ident|
-                            nominal_type.origin_module == self.env.idents.builtin_module and
+                            nominal_type.origin_module == ModuleEnv.CommonIdents.builtin_module and
                                 nominal_type.ident.ident_idx == list_ident
                         else
                             false;
@@ -1065,7 +1065,7 @@ pub const Store = struct {
 
                         // Special handling for built-in numeric types from Builtin module
                         // These have empty tag union backings but need scalar layouts
-                        if (nominal_type.origin_module == self.env.idents.builtin_module) {
+                        if (nominal_type.origin_module == ModuleEnv.CommonIdents.builtin_module) {
                             const ident_idx = nominal_type.ident.ident_idx;
                             const num_layout: ?Layout = blk: {
                                 if (self.u8_ident) |u8_id| if (ident_idx == u8_id) break :blk Layout.int(types.Int.Precision.u8);

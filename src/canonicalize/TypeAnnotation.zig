@@ -125,7 +125,7 @@ pub const TypeAnno = union(enum) {
                         // Special case: Builtin module is an implementation detail, print as (builtin)
                         // Use index comparison instead of string comparison
                         const is_builtin = if (ir.imports.getIdentIdx(external.module_idx)) |ident|
-                            ident.idx == ir.idents.builtin_module.idx
+                            ident.idx == ModuleEnv.CommonIdents.builtin_module.idx
                         else
                             false;
 
@@ -200,7 +200,7 @@ pub const TypeAnno = union(enum) {
                         // Special case: Builtin module is an implementation detail, print as (builtin)
                         // Use index comparison instead of string comparison
                         const is_builtin = if (ir.imports.getIdentIdx(external.module_idx)) |ident|
-                            ident.idx == ir.idents.builtin_module.idx
+                            ident.idx == ModuleEnv.CommonIdents.builtin_module.idx
                         else
                             false;
 
@@ -469,26 +469,27 @@ pub const TypeAnno = union(enum) {
 
         /// Convert an identifier index to the corresponding builtin type.
         /// Uses index comparison for efficiency (no string comparison).
-        pub fn fromIdent(ident: Ident.Idx, idents: *const ModuleEnv.CommonIdents) ?@This() {
+        pub fn fromIdent(ident: Ident.Idx) ?@This() {
             const idx = ident.idx;
-            if (idx == idents.list.idx) return .list;
-            if (idx == idents.box.idx) return .box;
-            if (idx == idents.num.idx) return .num;
-            if (idx == idents.frac.idx) return .frac;
-            if (idx == idents.int.idx) return .int;
-            if (idx == idents.type_U8.idx) return .u8;
-            if (idx == idents.type_U16.idx) return .u16;
-            if (idx == idents.type_U32.idx) return .u32;
-            if (idx == idents.type_U64.idx) return .u64;
-            if (idx == idents.type_U128.idx) return .u128;
-            if (idx == idents.type_I8.idx) return .i8;
-            if (idx == idents.type_I16.idx) return .i16;
-            if (idx == idents.type_I32.idx) return .i32;
-            if (idx == idents.type_I64.idx) return .i64;
-            if (idx == idents.type_I128.idx) return .i128;
-            if (idx == idents.type_F32.idx) return .f32;
-            if (idx == idents.type_F64.idx) return .f64;
-            if (idx == idents.type_Dec.idx) return .dec;
+            const CommonIdents = ModuleEnv.CommonIdents;
+            if (idx == CommonIdents.list.idx) return .list;
+            if (idx == CommonIdents.box.idx) return .box;
+            if (idx == CommonIdents.num.idx) return .num;
+            if (idx == CommonIdents.frac.idx) return .frac;
+            if (idx == CommonIdents.int.idx) return .int;
+            if (idx == CommonIdents.type_U8.idx) return .u8;
+            if (idx == CommonIdents.type_U16.idx) return .u16;
+            if (idx == CommonIdents.type_U32.idx) return .u32;
+            if (idx == CommonIdents.type_U64.idx) return .u64;
+            if (idx == CommonIdents.type_U128.idx) return .u128;
+            if (idx == CommonIdents.type_I8.idx) return .i8;
+            if (idx == CommonIdents.type_I16.idx) return .i16;
+            if (idx == CommonIdents.type_I32.idx) return .i32;
+            if (idx == CommonIdents.type_I64.idx) return .i64;
+            if (idx == CommonIdents.type_I128.idx) return .i128;
+            if (idx == CommonIdents.type_F32.idx) return .f32;
+            if (idx == CommonIdents.type_F64.idx) return .f64;
+            if (idx == CommonIdents.type_Dec.idx) return .dec;
             return null;
         }
     };

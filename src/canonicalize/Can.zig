@@ -5094,10 +5094,10 @@ pub fn canonicalizeExpr(
             const can_cond = try self.canonicalizeExpr(unary.expr) orelse return null;
 
             // Use pre-interned identifiers for the Ok/Err values and tag names
-            const ok_val_ident = self.env.idents.question_ok;
-            const err_val_ident = self.env.idents.question_err;
-            const ok_tag_ident = self.env.idents.ok;
-            const err_tag_ident = self.env.idents.err;
+            const ok_val_ident = ModuleEnv.CommonIdents.question_ok;
+            const err_val_ident = ModuleEnv.CommonIdents.question_err;
+            const ok_tag_ident = ModuleEnv.CommonIdents.ok;
+            const err_tag_ident = ModuleEnv.CommonIdents.err;
 
             // Mark the start of scratch match branches
             const scratch_top = self.env.store.scratchMatchBranchTop();
@@ -8292,7 +8292,7 @@ fn canonicalizeTypeHeader(self: *Self, header_idx: AST.TypeHeader.Idx, type_kind
     // Check if this is a builtin type
     // Allow builtin type names to be redeclared in the Builtin module
     // (e.g., Str := ... within Builtin.roc)
-    if (TypeAnno.Builtin.fromIdent(name_ident, &self.env.idents)) |_| {
+    if (TypeAnno.Builtin.fromIdent(name_ident)) |_| {
         if (!self.env.isBuiltinModule()) {
             return try self.env.pushMalformed(CIR.TypeHeader.Idx, Diagnostic{ .ident_already_in_scope = .{
                 .ident = name_ident,
@@ -10894,7 +10894,7 @@ fn checkMainFunction(self: *Self) std.mem.Allocator.Error!MainFunctionStatus {
                 const ident_idx = self.parse_ir.tokens.resolveIdentifier(ident_token) orelse continue;
 
                 // Use index comparison instead of string comparison
-                if (ident_idx.idx == self.env.idents.main_bang.idx) {
+                if (ident_idx.idx == ModuleEnv.CommonIdents.main_bang.idx) {
                     const region = self.parse_ir.tokenizedRegionToRegion(decl.region);
                     const expr = self.parse_ir.store.getExpr(decl.body);
 
