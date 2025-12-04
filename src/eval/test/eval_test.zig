@@ -795,9 +795,9 @@ test "ModuleEnv serialization and interpreter evaluation" {
         };
         defer writer.deinit(arena_alloc);
 
-        // Allocate space for ModuleEnv and serialize
-        const env_ptr = try writer.appendAlloc(arena_alloc, ModuleEnv);
-        const env_start_offset = writer.total_bytes - @sizeOf(ModuleEnv);
+        // Allocate space for ModuleEnv.Serialized and serialize
+        const env_ptr = try writer.appendAlloc(arena_alloc, ModuleEnv.Serialized);
+        const env_start_offset = writer.total_bytes - @sizeOf(ModuleEnv.Serialized);
         const serialized_ptr = @as(*ModuleEnv.Serialized, @ptrCast(@alignCast(env_ptr)));
         try serialized_ptr.serialize(&original_env, arena_alloc, &writer);
 
@@ -806,7 +806,7 @@ test "ModuleEnv serialization and interpreter evaluation" {
 
         // Read back from file
         const file_size = try tmp_file.getEndPos();
-        const buffer = try gpa.alignedAlloc(u8, std.mem.Alignment.fromByteUnits(@alignOf(ModuleEnv)), @intCast(file_size));
+        const buffer = try gpa.alignedAlloc(u8, CompactWriter.SERIALIZATION_ALIGNMENT, @intCast(file_size));
         defer gpa.free(buffer);
         _ = try tmp_file.pread(buffer, 0);
 

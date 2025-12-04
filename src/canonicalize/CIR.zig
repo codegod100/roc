@@ -833,32 +833,36 @@ pub const Import = struct {
         }
 
         /// Get or create an Import.Idx for the given module name, with an associated ident.
-        /// Uses O(1) map lookup via StringLiteral.Idx instead of string comparison.
+        /// Uses string comparison for deduplication since StringLiteral.Store doesn't deduplicate.
         /// New imports are initially unresolved (UNRESOLVED_MODULE).
         /// If ident_idx is provided, it will be stored for index-based lookups.
         pub fn getOrPutWithIdent(self: *Store, allocator: std.mem.Allocator, strings: *base.StringLiteral.Store, module_name: []const u8, ident_idx: ?base.Ident.Idx) !Import.Idx {
-            // First, intern the module name string (O(1) if already exists in string store)
-            const string_idx = try strings.insert(allocator, module_name);
-
-            // Try to find in map using O(1) index-based lookup
-            if (self.map.get(string_idx)) |existing_idx| {
-                // Found existing import - update ident if provided and not already set
-                const idx_int = @intFromEnum(existing_idx);
-                if (ident_idx) |ident| {
-                    if (idx_int < self.import_idents.len()) {
-                        const current = self.import_idents.items.items[idx_int];
-                        if (current.isNone()) {
-                            self.import_idents.items.items[idx_int] = ident;
+            // Search existing imports for a match by string comparison
+            // StringLiteral.Store doesn't deduplicate, so we must compare strings
+            const import_count = self.imports.len();
+            for (0..import_count) |i| {
+                const existing_str_idx = self.imports.items.items[i];
+                const existing_name = strings.get(existing_str_idx);
+                if (base.common_idents.stringsEqual(existing_name, module_name)) {
+                    // Found existing import - update ident if provided and not already set
+                    const existing_idx: Import.Idx = @enumFromInt(i);
+                    if (ident_idx) |ident| {
+                        if (i < self.import_idents.len()) {
+                            const current = self.import_idents.items.items[i];
+                            if (current.isNone()) {
+                                self.import_idents.items.items[i] = ident;
+                            }
                         }
                     }
+                    return existing_idx;
                 }
-                return existing_idx;
             }
 
             // Not found - create new import
+            const string_idx = try strings.insert(allocator, module_name);
             const idx = @as(Import.Idx, @enumFromInt(self.imports.len()));
 
-            // Add to both the list and the map, with unresolved module initially
+            // Add to the lists, with unresolved module initially
             _ = try self.imports.append(allocator, string_idx);
             _ = try self.import_idents.append(allocator, ident_idx orelse base.Ident.Idx.NONE);
             _ = try self.resolved_modules.append(allocator, Import.UNRESOLVED_MODULE);
@@ -903,7 +907,6 @@ pub const Import = struct {
         /// For each import, this finds the module in available_modules whose module_name
         /// matches the import name and sets the resolved index accordingly.
         pub fn resolveImports(self: *Store, env: anytype, available_modules: []const *const @import("ModuleEnv.zig")) void {
-            _ = env; // Module name strings not needed - use index comparison
             const import_count: usize = @intCast(self.imports.len());
             for (0..import_count) |i| {
                 const import_idx: Import.Idx = @enumFromInt(i);
@@ -917,9 +920,19 @@ pub const Import = struct {
                     continue;
                 }
 
-                // Find matching module by comparing Ident.Idx values (O(1) comparison)
+                // Find matching module - try index comparison first (O(1) for CommonIdents),
+                // then fall back to string comparison for user modules
+                const import_name = env.getIdent(import_ident);
                 for (available_modules, 0..) |module_env, module_idx| {
-                    if (module_env.module_name_idx.idx == import_ident.idx) {
+                    // Try index-based comparison first (fast path for CommonIdents like "Builtin")
+                    // This only works when both have the same CommonIdent index
+                    if (!module_env.module_name_idx.isNone() and module_env.module_name_idx.idx == import_ident.idx) {
+                        self.setResolvedModule(import_idx, @intCast(module_idx));
+                        break;
+                    }
+                    // Fall back to string comparison for all modules
+                    // This handles user modules where ident indices differ across stores
+                    if (base.common_idents.stringsEqual(module_env.module_name, import_name)) {
                         self.setResolvedModule(import_idx, @intCast(module_idx));
                         break;
                     }

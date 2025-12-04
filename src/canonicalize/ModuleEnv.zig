@@ -1678,6 +1678,10 @@ pub fn getSourceLine(self: *const Self, region: Region) ![]const u8 {
     return self.common.getSourceLine(region);
 }
 
+/// Map a module name string to its CommonIdent index if it's a known builtin module.
+/// Delegates to base.common_idents.moduleNameToCommonIdent.
+pub const moduleNameToCommonIdent = base.common_idents.moduleNameToCommonIdent;
+
 /// Serialized representation of ModuleEnv.
 /// Uses extern struct to guarantee consistent field layout across optimization levels.
 pub const Serialized = extern struct {
@@ -1784,7 +1788,7 @@ pub const Serialized = extern struct {
             .external_decls = self.external_decls.deserialize(offset).*,
             .imports = (try self.imports.deserialize(offset, gpa)).*,
             .module_name = module_name,
-            .module_name_idx = Ident.Idx.NONE, // Not used for deserialized modules (only needed during fresh canonicalization)
+            .module_name_idx = moduleNameToCommonIdent(module_name),
             .diagnostics = self.diagnostics,
             .store = self.store.deserialize(offset, gpa).*,
             .evaluation_order = null, // Not serialized, will be recomputed if needed

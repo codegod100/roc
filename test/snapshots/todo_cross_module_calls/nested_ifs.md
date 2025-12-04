@@ -1,13 +1,16 @@
 # META
 ~~~ini
-description=Test evaluation of nested if expressions
+description=Nested if expressions
 type=repl
 ~~~
 # SOURCE
 ~~~roc
-» if 5 > 3 (if 1 > 2 3 else 4) else 5
+» if True (if False 1 else 2) else 3
+» if False 1 else (if True 2 else 3)
 ~~~
 # OUTPUT
-4
+2
+---
+2
 # PROBLEMS
 NIL
