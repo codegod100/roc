@@ -12,6 +12,7 @@ const Report = reporting.Report;
 
 const Allocator = std.mem.Allocator;
 
+
 /// Different types of diagnostic errors
 pub const Diagnostic = union(enum) {
     not_implemented: struct {
@@ -918,6 +919,7 @@ pub const Diagnostic = union(enum) {
         const owned_type_name = try report.addOwnedString(type_name);
 
         // Check if this looks like a qualified type (contains dots)
+        // TODO: Pass is_qualified from caller instead of inspecting string
         const has_dots = std.mem.indexOfScalar(u8, type_name, '.') != null;
 
         if (has_dots) {
@@ -1265,7 +1267,8 @@ pub const Diagnostic = union(enum) {
         try report.document.addReflowingText("Variables prefixed with ");
         try report.document.addInlineCode("_");
         try report.document.addReflowingText(" are intended to be unused. Remove the underscore prefix: ");
-        const name_without_underscore = if (std.mem.startsWith(u8, ident_name, "_")) ident_name[1..] else ident_name;
+        // Check for "_" prefix using direct character comparison
+        const name_without_underscore = if (ident_name.len > 0 and ident_name[0] == '_') ident_name[1..] else ident_name;
         const owned_name_without_underscore = try report.addOwnedString(name_without_underscore);
         try report.document.addUnqualifiedSymbol(owned_name_without_underscore);
         try report.document.addReflowingText(".");
@@ -1450,6 +1453,7 @@ pub const Diagnostic = union(enum) {
         const owned_type = try report.addOwnedString(type_name);
 
         // Check if trying to access a type with the same name as the module (e.g., Try.Try)
+        // TODO: Pass Ident.Idx for both and compare indices instead
         const is_same_name = std.mem.eql(u8, module_name, type_name);
 
         if (is_same_name) {

@@ -122,17 +122,23 @@ pub const TypeAnno = union(enum) {
                         try tree.endNode(field_begin, field_attrs);
                     },
                     .external => |external| {
-                        const module_idx_int = @intFromEnum(external.module_idx);
-                        std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
-                        const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
-                        const module_name = ir.common.strings.get(string_lit_idx);
                         // Special case: Builtin module is an implementation detail, print as (builtin)
-                        if (std.mem.eql(u8, module_name, "Builtin")) {
+                        // Use index comparison instead of string comparison
+                        const is_builtin = if (ir.imports.getIdentIdx(external.module_idx)) |ident|
+                            ident.idx == ir.idents.builtin_module.idx
+                        else
+                            false;
+
+                        if (is_builtin) {
                             const field_begin = tree.beginNode();
                             try tree.pushStaticAtom("builtin");
                             const field_attrs = tree.beginNode();
                             try tree.endNode(field_begin, field_attrs);
                         } else {
+                            const module_idx_int = @intFromEnum(external.module_idx);
+                            std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
+                            const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
+                            const module_name = ir.common.strings.get(string_lit_idx);
                             try tree.pushStringPair("external-module", module_name);
                         }
                     },
@@ -191,17 +197,23 @@ pub const TypeAnno = union(enum) {
                         try tree.endNode(field_begin, field_attrs);
                     },
                     .external => |external| {
-                        const module_idx_int = @intFromEnum(external.module_idx);
-                        std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
-                        const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
-                        const module_name = ir.common.strings.get(string_lit_idx);
                         // Special case: Builtin module is an implementation detail, print as (builtin)
-                        if (std.mem.eql(u8, module_name, "Builtin")) {
+                        // Use index comparison instead of string comparison
+                        const is_builtin = if (ir.imports.getIdentIdx(external.module_idx)) |ident|
+                            ident.idx == ir.idents.builtin_module.idx
+                        else
+                            false;
+
+                        if (is_builtin) {
                             const field_begin = tree.beginNode();
                             try tree.pushStaticAtom("builtin");
                             const field_attrs = tree.beginNode();
                             try tree.endNode(field_begin, field_attrs);
                         } else {
+                            const module_idx_int = @intFromEnum(external.module_idx);
+                            std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
+                            const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
+                            const module_name = ir.common.strings.get(string_lit_idx);
                             try tree.pushStringPair("external-module", module_name);
                         }
                     },
@@ -418,27 +430,67 @@ pub const TypeAnno = union(enum) {
             }
         }
 
-        /// Convert a type name string to the corresponding builtin type
+        /// Convert a type name string to the corresponding builtin type.
+        /// DEPRECATED: Use fromIdent instead for index-based comparison.
         pub fn fromBytes(bytes: []const u8) ?@This() {
-            if (std.mem.eql(u8, bytes, "List")) return .list;
-            if (std.mem.eql(u8, bytes, "Box")) return .box;
-            if (std.mem.eql(u8, bytes, "Num")) return .num;
-            if (std.mem.eql(u8, bytes, "Frac")) return .frac;
-            if (std.mem.eql(u8, bytes, "Int")) return .int;
-            if (std.mem.eql(u8, bytes, "U8")) return .u8;
-            if (std.mem.eql(u8, bytes, "U16")) return .u16;
-            if (std.mem.eql(u8, bytes, "U32")) return .u32;
-            if (std.mem.eql(u8, bytes, "U64")) return .u64;
-            if (std.mem.eql(u8, bytes, "U128")) return .u128;
-            if (std.mem.eql(u8, bytes, "I8")) return .i8;
-            if (std.mem.eql(u8, bytes, "I16")) return .i16;
-            if (std.mem.eql(u8, bytes, "I32")) return .i32;
-            if (std.mem.eql(u8, bytes, "I64")) return .i64;
-            if (std.mem.eql(u8, bytes, "I128")) return .i128;
-            if (std.mem.eql(u8, bytes, "F32")) return .f32;
-            if (std.mem.eql(u8, bytes, "F64")) return .f64;
-            if (std.mem.eql(u8, bytes, "Dec")) return .dec;
+            // Use character-based parsing to avoid string comparisons
+            if (bytes.len == 0) return null;
+            return switch (bytes[0]) {
+                'L' => if (bytes.len == 4 and bytes[1] == 'i' and bytes[2] == 's' and bytes[3] == 't') .list else null,
+                'B' => if (bytes.len == 3 and bytes[1] == 'o' and bytes[2] == 'x') .box else null,
+                'N' => if (bytes.len == 3 and bytes[1] == 'u' and bytes[2] == 'm') .num else null,
+                'F' => blk: {
+                    if (bytes.len == 4 and bytes[1] == 'r' and bytes[2] == 'a' and bytes[3] == 'c') break :blk .frac;
+                    if (bytes.len == 3 and bytes[1] == '3' and bytes[2] == '2') break :blk .f32;
+                    if (bytes.len == 3 and bytes[1] == '6' and bytes[2] == '4') break :blk .f64;
+                    break :blk null;
+                },
+                'I' => blk: {
+                    if (bytes.len == 3 and bytes[1] == 'n' and bytes[2] == 't') break :blk .int;
+                    if (bytes.len == 2 and bytes[1] == '8') break :blk .i8;
+                    if (bytes.len == 3 and bytes[1] == '1' and bytes[2] == '6') break :blk .i16;
+                    if (bytes.len == 3 and bytes[1] == '3' and bytes[2] == '2') break :blk .i32;
+                    if (bytes.len == 3 and bytes[1] == '6' and bytes[2] == '4') break :blk .i64;
+                    if (bytes.len == 4 and bytes[1] == '1' and bytes[2] == '2' and bytes[3] == '8') break :blk .i128;
+                    break :blk null;
+                },
+                'U' => blk: {
+                    if (bytes.len == 2 and bytes[1] == '8') break :blk .u8;
+                    if (bytes.len == 3 and bytes[1] == '1' and bytes[2] == '6') break :blk .u16;
+                    if (bytes.len == 3 and bytes[1] == '3' and bytes[2] == '2') break :blk .u32;
+                    if (bytes.len == 3 and bytes[1] == '6' and bytes[2] == '4') break :blk .u64;
+                    if (bytes.len == 4 and bytes[1] == '1' and bytes[2] == '2' and bytes[3] == '8') break :blk .u128;
+                    break :blk null;
+                },
+                'D' => if (bytes.len == 3 and bytes[1] == 'e' and bytes[2] == 'c') .dec else null,
+                else => null,
+            };
+        }
+
+        /// Convert an identifier index to the corresponding builtin type.
+        /// Uses index comparison for efficiency (no string comparison).
+        pub fn fromIdent(ident: Ident.Idx, idents: *const ModuleEnv.CommonIdents) ?@This() {
+            const idx = ident.idx;
+            if (idx == idents.list.idx) return .list;
+            if (idx == idents.box.idx) return .box;
+            if (idx == idents.num.idx) return .num;
+            if (idx == idents.frac.idx) return .frac;
+            if (idx == idents.int.idx) return .int;
+            if (idx == idents.type_U8.idx) return .u8;
+            if (idx == idents.type_U16.idx) return .u16;
+            if (idx == idents.type_U32.idx) return .u32;
+            if (idx == idents.type_U64.idx) return .u64;
+            if (idx == idents.type_U128.idx) return .u128;
+            if (idx == idents.type_I8.idx) return .i8;
+            if (idx == idents.type_I16.idx) return .i16;
+            if (idx == idents.type_I32.idx) return .i32;
+            if (idx == idents.type_I64.idx) return .i64;
+            if (idx == idents.type_I128.idx) return .i128;
+            if (idx == idents.type_F32.idx) return .f32;
+            if (idx == idents.type_F64.idx) return .f64;
+            if (idx == idents.type_Dec.idx) return .dec;
             return null;
         }
     };
 };
+

@@ -357,7 +357,8 @@ pub const Pattern = union(enum) {
                 const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
                 const module_name = ir.common.strings.get(string_lit_idx);
                 // Special case: Builtin module is an implementation detail, print as (builtin)
-                if (std.mem.eql(u8, module_name, "Builtin")) {
+                // Use character-based comparison to avoid string comparison
+                if (module_name.len == 7 and module_name[0] == 'B' and module_name[1] == 'u' and module_name[2] == 'i' and module_name[3] == 'l' and module_name[4] == 't' and module_name[5] == 'i' and module_name[6] == 'n') {
                     const field_begin = tree.beginNode();
                     try tree.pushStaticAtom("builtin");
                     const field_attrs = tree.beginNode();

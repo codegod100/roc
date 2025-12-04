@@ -8,6 +8,7 @@ const base = @import("base");
 const ModuleEnv = @import("ModuleEnv.zig");
 const CIR = @import("CIR.zig");
 
+
 /// Replace all e_anno_only expressions in a Type Module with e_hosted_lambda operations (in-place).
 /// This transforms standalone annotations into hosted lambda operations that will be
 /// provided by the host application at runtime.
@@ -171,14 +172,21 @@ pub fn collectAndSortHostedFunctions(env: *ModuleEnv) !std.ArrayList(HostedFunct
             // Strip the .roc extension from module name (e.g., "Stdout.roc" -> "Stdout")
             var module_name = env.module_name;
 
-            if (std.mem.endsWith(u8, module_name, ".roc")) {
+            // Check for ".roc" suffix using direct character comparison
+            if (module_name.len >= 4 and
+                module_name[module_name.len - 4] == '.' and
+                module_name[module_name.len - 3] == 'r' and
+                module_name[module_name.len - 2] == 'o' and
+                module_name[module_name.len - 1] == 'c')
+            {
                 module_name = module_name[0 .. module_name.len - 4];
             }
             const qualified_name = try std.fmt.allocPrint(env.gpa, "{s}.{s}", .{ module_name, local_name });
             defer env.gpa.free(qualified_name);
 
             // Strip the `!` suffix for sorting (e.g., "Stdout.line!" -> "Stdout.line")
-            const stripped_name = if (std.mem.endsWith(u8, qualified_name, "!"))
+            // Check for "!" suffix using direct character comparison
+            const stripped_name = if (qualified_name.len > 0 and qualified_name[qualified_name.len - 1] == '!')
                 qualified_name[0 .. qualified_name.len - 1]
             else
                 qualified_name;

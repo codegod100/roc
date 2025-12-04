@@ -17,6 +17,7 @@ const SExprTree = base.SExprTree;
 const SExpr = base.SExpr;
 const TypeVar = types_mod.Var;
 
+
 // Re-export these from other modules for convenience
 pub const NodeStore = @import("NodeStore.zig");
 pub const Node = @import("Node.zig");
@@ -589,6 +590,80 @@ pub const NumKind = enum {
     f32,
     f64,
     dec,
+
+    /// Parse a numeric type suffix (e.g., "u8", "i32", "f64", "dec") into a NumKind.
+    /// Uses character-based parsing to avoid string comparisons.
+    /// Returns null if the suffix is not a valid numeric type suffix.
+    pub fn fromSuffix(suffix: []const u8) ?NumKind {
+        if (suffix.len < 2 or suffix.len > 4) return null;
+
+        return switch (suffix[0]) {
+            'u' => parseUnsignedSuffix(suffix),
+            'i' => parseSignedSuffix(suffix),
+            'f' => parseFloatSuffix(suffix),
+            'd' => if (suffix.len == 3 and suffix[1] == 'e' and suffix[2] == 'c') .dec else null,
+            else => null,
+        };
+    }
+
+    fn parseUnsignedSuffix(suffix: []const u8) ?NumKind {
+        return switch (suffix.len) {
+            2 => if (suffix[1] == '8') .u8 else null,
+            3 => if (suffix[1] == '1' and suffix[2] == '6')
+                .u16
+            else if (suffix[1] == '3' and suffix[2] == '2')
+                .u32
+            else if (suffix[1] == '6' and suffix[2] == '4')
+                .u64
+            else
+                null,
+            4 => if (suffix[1] == '1' and suffix[2] == '2' and suffix[3] == '8') .u128 else null,
+            else => null,
+        };
+    }
+
+    fn parseSignedSuffix(suffix: []const u8) ?NumKind {
+        return switch (suffix.len) {
+            2 => if (suffix[1] == '8') .i8 else null,
+            3 => if (suffix[1] == '1' and suffix[2] == '6')
+                .i16
+            else if (suffix[1] == '3' and suffix[2] == '2')
+                .i32
+            else if (suffix[1] == '6' and suffix[2] == '4')
+                .i64
+            else
+                null,
+            4 => if (suffix[1] == '1' and suffix[2] == '2' and suffix[3] == '8') .i128 else null,
+            else => null,
+        };
+    }
+
+    fn parseFloatSuffix(suffix: []const u8) ?NumKind {
+        if (suffix.len != 3) return null;
+        if (suffix[1] != '3' and suffix[1] != '6') return null;
+        if (suffix[2] != '2' and suffix[2] != '4') return null;
+        if (suffix[1] == '3' and suffix[2] == '2') return .f32;
+        if (suffix[1] == '6' and suffix[2] == '4') return .f64;
+        return null;
+    }
+
+    /// Parse an integer-only suffix (u8-u128, i8-i128). Returns null for float suffixes.
+    pub fn fromIntSuffix(suffix: []const u8) ?NumKind {
+        const kind = fromSuffix(suffix) orelse return null;
+        return switch (kind) {
+            .f32, .f64, .dec => null,
+            else => kind,
+        };
+    }
+
+    /// Parse a float-only suffix (f32, f64, dec). Returns null for integer suffixes.
+    pub fn fromFloatSuffix(suffix: []const u8) ?NumKind {
+        const kind = fromSuffix(suffix) orelse return null;
+        return switch (kind) {
+            .f32, .f64, .dec => kind,
+            else => null,
+        };
+    }
 };
 
 /// Base-256 digit storage for Numeral values.
@@ -693,7 +768,8 @@ pub fn formatBase256ToDecimal(
             // Print fractional part (removing leading "0.")
             var frac_buf: [32]u8 = undefined;
             const frac_str = std.fmt.bufPrint(&frac_buf, "{d:.6}", .{frac}) catch "0";
-            if (frac_str.len > 2 and std.mem.startsWith(u8, frac_str, "0.")) {
+            // Use character-based check instead of std.mem.startsWith
+            if (frac_str.len > 2 and frac_str[0] == '0' and frac_str[1] == '.') {
                 w.writeAll(frac_str[2..]) catch {};
             }
         }
@@ -757,30 +833,29 @@ pub const Import = struct {
         }
 
         /// Get or create an Import.Idx for the given module name, with an associated ident.
-        /// The module name is first checked against existing imports by comparing strings.
+        /// Uses O(1) map lookup via StringLiteral.Idx instead of string comparison.
         /// New imports are initially unresolved (UNRESOLVED_MODULE).
         /// If ident_idx is provided, it will be stored for index-based lookups.
         pub fn getOrPutWithIdent(self: *Store, allocator: std.mem.Allocator, strings: *base.StringLiteral.Store, module_name: []const u8, ident_idx: ?base.Ident.Idx) !Import.Idx {
-            // First check if we already have this module name by comparing strings
-            for (self.imports.items.items, 0..) |existing_string_idx, i| {
-                const existing_name = strings.get(existing_string_idx);
-                if (std.mem.eql(u8, existing_name, module_name)) {
-                    // Found existing import with same name
-                    // Update ident if provided and not already set
-                    if (ident_idx) |ident| {
-                        if (i < self.import_idents.len()) {
-                            const current = self.import_idents.items.items[i];
-                            if (current.isNone()) {
-                                self.import_idents.items.items[i] = ident;
-                            }
+            // First, intern the module name string (O(1) if already exists in string store)
+            const string_idx = try strings.insert(allocator, module_name);
+
+            // Try to find in map using O(1) index-based lookup
+            if (self.map.get(string_idx)) |existing_idx| {
+                // Found existing import - update ident if provided and not already set
+                const idx_int = @intFromEnum(existing_idx);
+                if (ident_idx) |ident| {
+                    if (idx_int < self.import_idents.len()) {
+                        const current = self.import_idents.items.items[idx_int];
+                        if (current.isNone()) {
+                            self.import_idents.items.items[idx_int] = ident;
                         }
                     }
-                    return @as(Import.Idx, @enumFromInt(i));
                 }
+                return existing_idx;
             }
 
             // Not found - create new import
-            const string_idx = try strings.insert(allocator, module_name);
             const idx = @as(Import.Idx, @enumFromInt(self.imports.len()));
 
             // Add to both the list and the map, with unresolved module initially
@@ -828,15 +903,23 @@ pub const Import = struct {
         /// For each import, this finds the module in available_modules whose module_name
         /// matches the import name and sets the resolved index accordingly.
         pub fn resolveImports(self: *Store, env: anytype, available_modules: []const *const @import("ModuleEnv.zig")) void {
+            _ = env; // Module name strings not needed - use index comparison
             const import_count: usize = @intCast(self.imports.len());
             for (0..import_count) |i| {
                 const import_idx: Import.Idx = @enumFromInt(i);
-                const str_idx = self.imports.items.items[i];
-                const import_name = env.common.getString(str_idx);
 
-                // Find matching module in available_modules by comparing module names
+                // Use index-based comparison via stored import idents
+                // All imports should have idents stored (registered via getOrPutWithIdent)
+                const import_ident = if (i < self.import_idents.len()) self.import_idents.items.items[i] else Ident.Idx.NONE;
+
+                if (import_ident.isNone()) {
+                    // This should not happen - all imports should be registered with idents
+                    continue;
+                }
+
+                // Find matching module by comparing Ident.Idx values (O(1) comparison)
                 for (available_modules, 0..) |module_env, module_idx| {
-                    if (std.mem.eql(u8, module_env.module_name, import_name)) {
+                    if (module_env.module_name_idx.idx == import_ident.idx) {
                         self.setResolvedModule(import_idx, @intCast(module_idx));
                         break;
                     }

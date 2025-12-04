@@ -1423,17 +1423,23 @@ pub const Expr = union(enum) {
                 try ir.appendRegionInfoToSExprTreeFromRegion(tree, e.region);
                 const attrs = tree.beginNode();
 
-                const module_idx_int = @intFromEnum(e.module_idx);
-                std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
-                const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
-                const module_name = ir.common.strings.get(string_lit_idx);
                 // Special case: Builtin module is an implementation detail, print as (builtin)
-                if (std.mem.eql(u8, module_name, "Builtin")) {
+                // Use index comparison instead of string comparison
+                const is_builtin = if (ir.imports.getIdentIdx(e.module_idx)) |ident|
+                    ident.idx == ir.idents.builtin_module.idx
+                else
+                    false;
+
+                if (is_builtin) {
                     const field_begin = tree.beginNode();
                     try tree.pushStaticAtom("builtin");
                     const field_attrs = tree.beginNode();
                     try tree.endNode(field_begin, field_attrs);
                 } else {
+                    const module_idx_int = @intFromEnum(e.module_idx);
+                    std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
+                    const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
+                    const module_name = ir.common.strings.get(string_lit_idx);
                     try tree.pushStringPair("external-module", module_name);
                 }
 
@@ -1619,17 +1625,23 @@ pub const Expr = union(enum) {
                 try ir.appendRegionInfoToSExprTreeFromRegion(tree, region);
                 const attrs = tree.beginNode();
 
-                const module_idx_int = @intFromEnum(e.module_idx);
-                std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
-                const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
-                const module_name = ir.common.strings.get(string_lit_idx);
                 // Special case: Builtin module is an implementation detail, print as (builtin)
-                if (std.mem.eql(u8, module_name, "Builtin")) {
+                // Use index comparison instead of string comparison
+                const is_builtin = if (ir.imports.getIdentIdx(e.module_idx)) |ident|
+                    ident.idx == ir.idents.builtin_module.idx
+                else
+                    false;
+
+                if (is_builtin) {
                     const field_begin = tree.beginNode();
                     try tree.pushStaticAtom("builtin");
                     const field_attrs = tree.beginNode();
                     try tree.endNode(field_begin, field_attrs);
                 } else {
+                    const module_idx_int = @intFromEnum(e.module_idx);
+                    std.debug.assert(module_idx_int < ir.imports.imports.items.items.len);
+                    const string_lit_idx = ir.imports.imports.items.items[module_idx_int];
+                    const module_name = ir.common.strings.get(string_lit_idx);
                     try tree.pushStringPair("external-module", module_name);
                 }
 
@@ -2049,3 +2061,4 @@ pub const Expr = union(enum) {
         pub const Span = extern struct { span: base.DataSpan };
     };
 };
+

@@ -123,6 +123,25 @@ pub const CommonIdents = extern struct {
     str: Ident.Idx,
     list: Ident.Idx,
     box: Ident.Idx,
+    // Unqualified builtin type names for index-based comparison
+    num: Ident.Idx,
+    frac: Ident.Idx,
+    int: Ident.Idx,
+    type_U8: Ident.Idx,
+    type_U16: Ident.Idx,
+    type_U32: Ident.Idx,
+    type_U64: Ident.Idx,
+    type_U128: Ident.Idx,
+    type_I8: Ident.Idx,
+    type_I16: Ident.Idx,
+    type_I32: Ident.Idx,
+    type_I64: Ident.Idx,
+    type_I128: Ident.Idx,
+    type_F32: Ident.Idx,
+    type_F64: Ident.Idx,
+    type_Dec: Ident.Idx,
+    // Special identifiers
+    main_bang: Ident.Idx,
 
     // Fully-qualified type identifiers for type checking and layout generation
     builtin_try: Ident.Idx,
@@ -198,6 +217,25 @@ pub const CommonIdents = extern struct {
             .str = try common.insertIdent(gpa, Ident.for_text("Str")),
             .list = try common.insertIdent(gpa, Ident.for_text("List")),
             .box = try common.insertIdent(gpa, Ident.for_text("Box")),
+            // Unqualified builtin type names for index-based comparison
+            .num = try common.insertIdent(gpa, Ident.for_text("Num")),
+            .frac = try common.insertIdent(gpa, Ident.for_text("Frac")),
+            .int = try common.insertIdent(gpa, Ident.for_text("Int")),
+            .type_U8 = try common.insertIdent(gpa, Ident.for_text("U8")),
+            .type_U16 = try common.insertIdent(gpa, Ident.for_text("U16")),
+            .type_U32 = try common.insertIdent(gpa, Ident.for_text("U32")),
+            .type_U64 = try common.insertIdent(gpa, Ident.for_text("U64")),
+            .type_U128 = try common.insertIdent(gpa, Ident.for_text("U128")),
+            .type_I8 = try common.insertIdent(gpa, Ident.for_text("I8")),
+            .type_I16 = try common.insertIdent(gpa, Ident.for_text("I16")),
+            .type_I32 = try common.insertIdent(gpa, Ident.for_text("I32")),
+            .type_I64 = try common.insertIdent(gpa, Ident.for_text("I64")),
+            .type_I128 = try common.insertIdent(gpa, Ident.for_text("I128")),
+            .type_F32 = try common.insertIdent(gpa, Ident.for_text("F32")),
+            .type_F64 = try common.insertIdent(gpa, Ident.for_text("F64")),
+            .type_Dec = try common.insertIdent(gpa, Ident.for_text("Dec")),
+            // Special identifiers
+            .main_bang = try common.insertIdent(gpa, Ident.for_text("main!")),
             .builtin_try = try common.insertIdent(gpa, Ident.for_text("Try")),
             .builtin_numeral = try common.insertIdent(gpa, Ident.for_text("Num.Numeral")),
             .builtin_str = try common.insertIdent(gpa, Ident.for_text("Builtin.Str")),
@@ -272,6 +310,25 @@ pub const CommonIdents = extern struct {
             .str = common.findIdent("Str") orelse unreachable,
             .list = common.findIdent("List") orelse unreachable,
             .box = common.findIdent("Box") orelse unreachable,
+            // Unqualified builtin type names for index-based comparison
+            .num = common.findIdent("Num") orelse unreachable,
+            .frac = common.findIdent("Frac") orelse unreachable,
+            .int = common.findIdent("Int") orelse unreachable,
+            .type_U8 = common.findIdent("U8") orelse unreachable,
+            .type_U16 = common.findIdent("U16") orelse unreachable,
+            .type_U32 = common.findIdent("U32") orelse unreachable,
+            .type_U64 = common.findIdent("U64") orelse unreachable,
+            .type_U128 = common.findIdent("U128") orelse unreachable,
+            .type_I8 = common.findIdent("I8") orelse unreachable,
+            .type_I16 = common.findIdent("I16") orelse unreachable,
+            .type_I32 = common.findIdent("I32") orelse unreachable,
+            .type_I64 = common.findIdent("I64") orelse unreachable,
+            .type_I128 = common.findIdent("I128") orelse unreachable,
+            .type_F32 = common.findIdent("F32") orelse unreachable,
+            .type_F64 = common.findIdent("F64") orelse unreachable,
+            .type_Dec = common.findIdent("Dec") orelse unreachable,
+            // Special identifiers
+            .main_bang = common.findIdent("main!") orelse unreachable,
             .builtin_try = common.findIdent("Try") orelse unreachable,
             .builtin_numeral = common.findIdent("Num.Numeral") orelse unreachable,
             .builtin_str = common.findIdent("Builtin.Str") orelse unreachable,
@@ -2615,6 +2672,12 @@ pub fn initTypeWriter(self: *Self) std.mem.Allocator.Error!TypeWriter {
 /// Inserts an identifier into the common environment and returns its index.
 pub fn insertIdent(self: *Self, ident: Ident) std.mem.Allocator.Error!Ident.Idx {
     return try self.common.insertIdent(self.gpa, ident);
+}
+
+/// Returns true if this is the Builtin module.
+/// Uses index comparison for efficiency (no string comparison).
+pub fn isBuiltinModule(self: *const Self) bool {
+    return self.module_name_idx.idx == self.idents.builtin_module.idx;
 }
 
 /// Creates and inserts a qualified identifier (e.g., "Foo.bar") into the common environment.

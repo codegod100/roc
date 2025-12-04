@@ -25,6 +25,7 @@ const DataSpan = base.DataSpan;
 const ModuleEnv = @import("ModuleEnv.zig");
 const Node = @import("Node.zig");
 
+
 /// Information about an auto-imported module type
 pub const AutoImportedType = struct {
     env: *const ModuleEnv,
@@ -1317,45 +1318,26 @@ fn processAssociatedItemsSecondPass(
 }
 
 /// Register the user-facing fully qualified name in the module scope.
-/// Given a fully qualified name like "module.Foo.Bar.baz", this registers:
-/// - "Foo.Bar.baz" in module scope (user-facing fully qualified)
+/// Given a relative parent name (without module prefix) and an item name, this registers
+/// the combined user-facing name (e.g., "Foo.Bar" + "baz" -> "Foo.Bar.baz") in module scope.
 ///
 /// Note: Partially qualified names (e.g., "Bar.baz" for Foo's scope, "baz" for Bar's scope)
 /// are NOT registered here. They are registered in processAssociatedBlock when the
 /// actual scopes are entered, via the alias registration logic there.
 fn registerUserFacingName(
     self: *Self,
-    fully_qualified_idx: Ident.Idx,
+    relative_parent_idx: ?Ident.Idx,
     item_name_idx: Ident.Idx,
     pattern_idx: CIR.Pattern.Idx,
 ) std.mem.Allocator.Error!void {
-    _ = item_name_idx;
+    // Build the user-facing qualified name using the relative parent (without module prefix)
+    const user_facing_idx = if (relative_parent_idx) |rel_parent| blk: {
+        const rel_parent_text = self.env.getIdent(rel_parent);
+        const item_text = self.env.getIdent(item_name_idx);
+        break :blk try self.env.insertQualifiedIdent(rel_parent_text, item_text);
+    } else item_name_idx; // No parent - just use the item name itself
 
-    // Get the fully qualified text and strip the module prefix
-    const fully_qualified_text = self.env.getIdent(fully_qualified_idx);
-    const module_prefix = self.env.module_name;
-
-    // Must start with module prefix
-    if (!std.mem.startsWith(u8, fully_qualified_text, module_prefix) or
-        fully_qualified_text.len <= module_prefix.len or
-        fully_qualified_text[module_prefix.len] != '.')
-    {
-        return; // Not a module-qualified identifier, nothing to register
-    }
-
-    // Get user-facing text (without module prefix), e.g., "Foo.Bar.baz"
-    const user_facing_start = module_prefix.len + 1;
-    const user_facing_text = fully_qualified_text[user_facing_start..];
-
-    // Copy to local buffer to avoid invalidation during insertIdent calls
-    var buf: [512]u8 = undefined;
-    if (user_facing_text.len > buf.len) return;
-    @memcpy(buf[0..user_facing_text.len], user_facing_text);
-    const user_text = buf[0..user_facing_text.len];
-
-    // Register ONLY the fully qualified user-facing name in the module scope.
-    // For "Foo.Bar.baz", we register just "Foo.Bar.baz" - not the shorter suffixes.
-    const user_facing_idx = try self.env.insertIdent(base.Ident.for_text(user_text));
+    // Register the user-facing name in the module scope
     try self.scopes.items[0].idents.put(self.env.gpa, user_facing_idx, pattern_idx);
 }
 
@@ -1550,24 +1532,14 @@ fn processAssociatedItemsFirstPass(
                 if (self.scopeLookupTypeDecl(fully_qualified_ident_idx)) |type_decl_idx| {
                     const current_scope = &self.scopes.items[self.scopes.items.len - 1];
 
-                    // Build user-facing qualified name by stripping module prefix
-                    // Re-fetch strings since insertQualifiedIdent may have reallocated
-                    const fully_qualified_text = self.env.getIdent(fully_qualified_ident_idx);
-                    const module_prefix = self.env.module_name;
-
-                    // Check if the fully qualified name starts with the module name
-                    const user_facing_text = if (std.mem.startsWith(u8, fully_qualified_text, module_prefix) and
-                        fully_qualified_text.len > module_prefix.len and
-                        fully_qualified_text[module_prefix.len] == '.')
-                        fully_qualified_text[module_prefix.len + 1 ..] // Skip "module."
-                    else
-                        fully_qualified_text; // No module prefix, use as-is
-
-                    // Only add alias if it's different from the fully qualified name
-                    if (!std.mem.eql(u8, user_facing_text, fully_qualified_text)) {
-                        const user_qualified_ident_idx = try self.env.insertIdent(base.Ident.for_text(user_facing_text));
+                    // Build user-facing qualified name using relative_parent_name (without module prefix)
+                    if (relative_parent_name) |rel_parent| {
+                        const rel_parent_text = self.env.getIdent(rel_parent);
+                        const type_text = self.env.getIdent(nested_type_ident);
+                        const user_qualified_ident_idx = try self.env.insertQualifiedIdent(rel_parent_text, type_text);
                         try current_scope.introduceTypeAlias(self.env.gpa, user_qualified_ident_idx, type_decl_idx);
                     }
+                    // If no relative parent, we're at module root - no user-facing alias needed
                 }
             }
         }
@@ -1602,21 +1574,14 @@ fn processAssociatedItemsFirstPass(
                 if (self.scopeLookupTypeDecl(fully_qualified_ident_idx)) |type_decl_idx| {
                     const current_scope = &self.scopes.items[self.scopes.items.len - 1];
 
-                    // Build user-facing qualified name by stripping module prefix
-                    const fully_qualified_text = self.env.getIdent(fully_qualified_ident_idx);
-                    const module_prefix = self.env.module_name;
-
-                    const user_facing_text = if (std.mem.startsWith(u8, fully_qualified_text, module_prefix) and
-                        fully_qualified_text.len > module_prefix.len and
-                        fully_qualified_text[module_prefix.len] == '.')
-                        fully_qualified_text[module_prefix.len + 1 ..]
-                    else
-                        fully_qualified_text;
-
-                    if (!std.mem.eql(u8, user_facing_text, fully_qualified_text)) {
-                        const user_qualified_ident_idx = try self.env.insertIdent(base.Ident.for_text(user_facing_text));
+                    // Build user-facing qualified name using relative_parent_name (without module prefix)
+                    if (relative_parent_name) |rel_parent| {
+                        const rel_parent_text = self.env.getIdent(rel_parent);
+                        const type_text = self.env.getIdent(nested_type_ident);
+                        const user_qualified_ident_idx = try self.env.insertQualifiedIdent(rel_parent_text, type_text);
                         try current_scope.introduceTypeAlias(self.env.gpa, user_qualified_ident_idx, type_decl_idx);
                     }
+                    // If no relative parent, we're at module root - no user-facing alias needed
                 }
             }
         }
@@ -1656,11 +1621,8 @@ fn processAssociatedItemsFirstPass(
                         const current_scope = &self.scopes.items[self.scopes.items.len - 1];
                         try current_scope.idents.put(self.env.gpa, qualified_idx, placeholder_pattern_idx);
 
-                        // Register progressively qualified names at each scope level per the plan:
-                        // - Module scope gets "Foo.Bar.baz" (user-facing fully qualified)
-                        // - Foo's scope gets "Bar.baz" (partially qualified)
-                        // - Bar's scope gets "baz" (unqualified)
-                        try self.registerUserFacingName(qualified_idx, decl_ident, placeholder_pattern_idx);
+                        // Register user-facing name in module scope (e.g., "Foo.Bar.baz" from relative parent "Foo.Bar" + "baz")
+                        try self.registerUserFacingName(relative_parent_name, decl_ident, placeholder_pattern_idx);
                     }
                 }
             },
@@ -1687,8 +1649,8 @@ fn processAssociatedItemsFirstPass(
                     const current_scope = &self.scopes.items[self.scopes.items.len - 1];
                     try current_scope.idents.put(self.env.gpa, qualified_idx, placeholder_pattern_idx);
 
-                    // Register progressively qualified names at each scope level per the plan
-                    try self.registerUserFacingName(qualified_idx, anno_ident, placeholder_pattern_idx);
+                    // Register user-facing name in module scope
+                    try self.registerUserFacingName(relative_parent_name, anno_ident, placeholder_pattern_idx);
                 }
             },
             else => {
@@ -1972,18 +1934,20 @@ pub fn canonicalizeFile(
                 // Build fully qualified name (e.g., "Builtin.Str")
                 // For type-modules where the main type name equals the module name,
                 // use just the module name to avoid "Builtin.Builtin"
-                const module_name_text = self.env.module_name;
-                const type_name_text = self.env.getIdent(type_ident);
-                const qualified_type_ident = if (std.mem.eql(u8, module_name_text, type_name_text))
+                // Use index comparison instead of string comparison
+                const qualified_type_ident = if (type_ident.idx == self.env.module_name_idx.idx)
                     type_ident // Type-module: use unqualified name
-                else
-                    try self.env.insertQualifiedIdent(module_name_text, type_name_text);
+                else blk: {
+                    const module_name_text = self.env.module_name;
+                    const type_name_text = self.env.getIdent(type_ident);
+                    break :blk try self.env.insertQualifiedIdent(module_name_text, type_name_text);
+                };
 
                 // For module-level associated blocks, pass the type name as relative_parent
                 // so nested types get correct relative names like "TypeName.NestedType".
                 // Exception: The Builtin module's types (Str, Bool, etc.) should have simple names
                 // since they're implicitly imported into every module's scope.
-                const relative_parent = if (std.mem.eql(u8, module_name_text, "Builtin"))
+                const relative_parent = if (self.env.isBuiltinModule())
                     null
                 else
                     type_ident;
@@ -4440,39 +4404,11 @@ pub fn canonicalizeExpr(
             // If a user provided a suffix, then we treat is as an type
             // annotation to apply to the number
             if (parsed.suffix) |suffix| {
-                // Capture the suffix, if provided
-                const num_suffix: CIR.NumKind = blk: {
-                    if (std.mem.eql(u8, suffix, "u8")) {
-                        break :blk .u8;
-                    } else if (std.mem.eql(u8, suffix, "u16")) {
-                        break :blk .u16;
-                    } else if (std.mem.eql(u8, suffix, "u32")) {
-                        break :blk .u32;
-                    } else if (std.mem.eql(u8, suffix, "u64")) {
-                        break :blk .u64;
-                    } else if (std.mem.eql(u8, suffix, "u128")) {
-                        break :blk .u128;
-                    } else if (std.mem.eql(u8, suffix, "i8")) {
-                        break :blk .i8;
-                    } else if (std.mem.eql(u8, suffix, "i16")) {
-                        break :blk .i16;
-                    } else if (std.mem.eql(u8, suffix, "i32")) {
-                        break :blk .i32;
-                    } else if (std.mem.eql(u8, suffix, "i64")) {
-                        break :blk .i64;
-                    } else if (std.mem.eql(u8, suffix, "i128")) {
-                        break :blk .i128;
-                    } else if (std.mem.eql(u8, suffix, "f32")) {
-                        break :blk .f32;
-                    } else if (std.mem.eql(u8, suffix, "f64")) {
-                        break :blk .f64;
-                    } else if (std.mem.eql(u8, suffix, "dec")) {
-                        break :blk .dec;
-                    } else {
-                        // TODO: Create a new error type
-                        const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                        return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
-                    }
+                // Capture the suffix, if provided (uses character-based parsing)
+                const num_suffix: CIR.NumKind = CIR.NumKind.fromSuffix(suffix) orelse {
+                    // Invalid suffix
+                    const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
+                    return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
                 };
 
                 // Note that type-checking will ensure that the actual int value
@@ -4512,45 +4448,54 @@ pub fn canonicalizeExpr(
                     return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
                 };
 
-                if (std.mem.eql(u8, suffix, "f32")) {
-                    if (!CIR.fitsInF32(f64_val)) {
-                        const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                        return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
+                // Use character-based suffix parsing
+                const suffix_kind = CIR.NumKind.fromFloatSuffix(suffix);
+                if (suffix_kind) |kind| {
+                    switch (kind) {
+                        .f32 => {
+                            if (!CIR.fitsInF32(f64_val)) {
+                                const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
+                                return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
+                            }
+                            const expr_idx = try self.env.addExpr(
+                                .{ .e_frac_f32 = .{
+                                    .value = @floatCast(f64_val),
+                                    .has_suffix = true,
+                                } },
+                                region,
+                            );
+                            return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
+                        },
+                        .f64 => {
+                            const expr_idx = try self.env.addExpr(
+                                .{ .e_frac_f64 = .{
+                                    .value = f64_val,
+                                    .has_suffix = true,
+                                } },
+                                region,
+                            );
+                            return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
+                        },
+                        .dec => {
+                            if (!CIR.fitsInDec(f64_val)) {
+                                const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
+                                return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
+                            }
+                            const dec_val = RocDec.fromF64(f64_val) orelse {
+                                const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
+                                return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
+                            };
+                            const expr_idx = try self.env.addExpr(
+                                .{ .e_dec = .{
+                                    .value = dec_val,
+                                    .has_suffix = true,
+                                } },
+                                region,
+                            );
+                            return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
+                        },
+                        else => {}, // Not a float suffix, fall through
                     }
-                    const expr_idx = try self.env.addExpr(
-                        .{ .e_frac_f32 = .{
-                            .value = @floatCast(f64_val),
-                            .has_suffix = true,
-                        } },
-                        region,
-                    );
-                    return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
-                } else if (std.mem.eql(u8, suffix, "f64")) {
-                    const expr_idx = try self.env.addExpr(
-                        .{ .e_frac_f64 = .{
-                            .value = f64_val,
-                            .has_suffix = true,
-                        } },
-                        region,
-                    );
-                    return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
-                } else if (std.mem.eql(u8, suffix, "dec")) {
-                    if (!CIR.fitsInDec(f64_val)) {
-                        const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                        return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
-                    }
-                    const dec_val = RocDec.fromF64(f64_val) orelse {
-                        const expr_idx = try self.env.pushMalformed(Expr.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                        return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
-                    };
-                    const expr_idx = try self.env.addExpr(
-                        .{ .e_dec = .{
-                            .value = dec_val,
-                            .has_suffix = true,
-                        } },
-                        region,
-                    );
-                    return CanonicalizedExpr{ .idx = expr_idx, .free_vars = DataSpan.empty() };
                 }
             }
 
@@ -6156,6 +6101,7 @@ fn canonicalizeTagExpr(self: *Self, e: AST.TagExpr, mb_args: ?AST.Expr.Span, reg
 /// Handles: \n, \r, \t, \\, \", \', \$, and \u(XXXX) unicode escapes.
 fn processEscapeSequences(allocator: std.mem.Allocator, input: []const u8) std.mem.Allocator.Error![]const u8 {
     // Quick check: if no backslashes, return the input as-is
+    // Note: This is string content parsing, not identifier comparison
     if (std.mem.indexOfScalar(u8, input, '\\') == null) {
         return input;
     }
@@ -6197,7 +6143,7 @@ fn processEscapeSequences(allocator: std.mem.Allocator, input: []const u8) std.m
                 'u' => {
                     // Unicode escape: \u(XXXX)
                     if (i + 2 < input.len and input[i + 2] == '(') {
-                        // Find the closing paren
+                        // Find the closing paren (string content parsing)
                         if (std.mem.indexOfScalarPos(u8, input, i + 3, ')')) |close_paren| {
                             const hex_code = input[i + 3 .. close_paren];
                             if (std.fmt.parseInt(u21, hex_code, 16)) |codepoint| {
@@ -6501,38 +6447,10 @@ fn canonicalizePattern(
             // in their signed type. We report them as needing one less bit to make the
             // standard "signed types have n-1 usable bits" logic work correctly.
             if (parsed.suffix) |suffix| {
-                // Capture the suffix, if provided
-                const num_suffix: CIR.NumKind = blk: {
-                    if (std.mem.eql(u8, suffix, "u8")) {
-                        break :blk .u8;
-                    } else if (std.mem.eql(u8, suffix, "u16")) {
-                        break :blk .u16;
-                    } else if (std.mem.eql(u8, suffix, "u32")) {
-                        break :blk .u32;
-                    } else if (std.mem.eql(u8, suffix, "u64")) {
-                        break :blk .u64;
-                    } else if (std.mem.eql(u8, suffix, "u128")) {
-                        break :blk .u128;
-                    } else if (std.mem.eql(u8, suffix, "i8")) {
-                        break :blk .i8;
-                    } else if (std.mem.eql(u8, suffix, "i16")) {
-                        break :blk .i16;
-                    } else if (std.mem.eql(u8, suffix, "i32")) {
-                        break :blk .i32;
-                    } else if (std.mem.eql(u8, suffix, "i64")) {
-                        break :blk .i64;
-                    } else if (std.mem.eql(u8, suffix, "i128")) {
-                        break :blk .i128;
-                    } else if (std.mem.eql(u8, suffix, "f32")) {
-                        break :blk .f32;
-                    } else if (std.mem.eql(u8, suffix, "f64")) {
-                        break :blk .f64;
-                    } else if (std.mem.eql(u8, suffix, "dec")) {
-                        break :blk .dec;
-                    } else {
-                        // TODO: Create a new error type
-                        return try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                    }
+                // Capture the suffix, if provided (uses character-based parsing)
+                const num_suffix: CIR.NumKind = CIR.NumKind.fromSuffix(suffix) orelse {
+                    // Invalid suffix
+                    return try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
                 };
                 const pattern_idx = try self.env.addPattern(
                     .{ .num_literal = .{
@@ -6566,36 +6484,45 @@ fn canonicalizePattern(
                     return malformed_idx;
                 };
 
-                if (std.mem.eql(u8, suffix, "f32")) {
-                    if (!CIR.fitsInF32(f64_val)) {
-                        const malformed_idx = try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                        return malformed_idx;
+                // Use character-based suffix parsing
+                const suffix_kind = CIR.NumKind.fromFloatSuffix(suffix);
+                if (suffix_kind) |kind| {
+                    switch (kind) {
+                        .f32 => {
+                            if (!CIR.fitsInF32(f64_val)) {
+                                const malformed_idx = try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
+                                return malformed_idx;
+                            }
+                            const pattern_idx = try self.env.addPattern(
+                                .{ .frac_f32_literal = .{ .value = @floatCast(f64_val) } },
+                                region,
+                            );
+                            return pattern_idx;
+                        },
+                        .f64 => {
+                            const pattern_idx = try self.env.addPattern(
+                                .{ .frac_f64_literal = .{ .value = f64_val } },
+                                region,
+                            );
+                            return pattern_idx;
+                        },
+                        .dec => {
+                            if (!CIR.fitsInDec(f64_val)) {
+                                const malformed_idx = try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
+                                return malformed_idx;
+                            }
+                            const dec_val = RocDec.fromF64(f64_val) orelse {
+                                const malformed_idx = try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
+                                return malformed_idx;
+                            };
+                            const pattern_idx = try self.env.addPattern(
+                                .{ .dec_literal = .{ .value = dec_val, .has_suffix = true } },
+                                region,
+                            );
+                            return pattern_idx;
+                        },
+                        else => {}, // Not a float suffix, fall through
                     }
-                    const pattern_idx = try self.env.addPattern(
-                        .{ .frac_f32_literal = .{ .value = @floatCast(f64_val) } },
-                        region,
-                    );
-                    return pattern_idx;
-                } else if (std.mem.eql(u8, suffix, "f64")) {
-                    const pattern_idx = try self.env.addPattern(
-                        .{ .frac_f64_literal = .{ .value = f64_val } },
-                        region,
-                    );
-                    return pattern_idx;
-                } else if (std.mem.eql(u8, suffix, "dec")) {
-                    if (!CIR.fitsInDec(f64_val)) {
-                        const malformed_idx = try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                        return malformed_idx;
-                    }
-                    const dec_val = RocDec.fromF64(f64_val) orelse {
-                        const malformed_idx = try self.env.pushMalformed(Pattern.Idx, Diagnostic{ .invalid_num_literal = .{ .region = region } });
-                        return malformed_idx;
-                    };
-                    const pattern_idx = try self.env.addPattern(
-                        .{ .dec_literal = .{ .value = dec_val, .has_suffix = true } },
-                        region,
-                    );
-                    return pattern_idx;
                 }
             }
 
@@ -7273,8 +7200,8 @@ fn parseSmallDec(token_text: []const u8) ?struct { numerator: i16, denominator_p
         if (all_zeros) return null;
     }
 
-    // Parse as a whole number by removing the decimal point
-    const dot_pos = std.mem.indexOf(u8, token_text, ".") orelse {
+    // Parse as a whole number by removing the decimal point (numeric literal parsing)
+    const dot_pos = std.mem.indexOfScalar(u8, token_text, '.') orelse {
         // No decimal point, parse as integer
         const val = std.fmt.parseInt(i32, token_text, 10) catch return null;
         if (val < -32768 or val > 32767) return null;
@@ -8454,10 +8381,8 @@ fn canonicalizeTypeHeader(self: *Self, header_idx: AST.TypeHeader.Idx, type_kind
     // Check if this is a builtin type
     // Allow builtin type names to be redeclared in the Builtin module
     // (e.g., Str := ... within Builtin.roc)
-    // TODO: Can we compare idents or something here? The byte slice comparison is ineffecient
-    if (TypeAnno.Builtin.fromBytes(self.env.getIdentText(name_ident))) |_| {
-        const is_builtin_module = std.mem.eql(u8, self.env.module_name, "Builtin");
-        if (!is_builtin_module) {
+    if (TypeAnno.Builtin.fromIdent(name_ident, &self.env.idents)) |_| {
+        if (!self.env.isBuiltinModule()) {
             return try self.env.pushMalformed(CIR.TypeHeader.Idx, Diagnostic{ .ident_already_in_scope = .{
                 .ident = name_ident,
                 .region = region,
@@ -10566,8 +10491,8 @@ fn getOrCreateAutoImport(self: *Self, module_name_text: []const u8) std.mem.Allo
 fn extractModuleName(self: *Self, module_name_ident: Ident.Idx) std.mem.Allocator.Error!Ident.Idx {
     const module_text = self.env.getIdent(module_name_ident);
 
-    // Find the last dot and extract the part after it
-    if (std.mem.lastIndexOf(u8, module_text, ".")) |last_dot_idx| {
+    // Find the last dot and extract the part after it (qualified name parsing)
+    if (std.mem.lastIndexOfScalar(u8, module_text, '.')) |last_dot_idx| {
         const extracted_name = module_text[last_dot_idx + 1 ..];
         return try self.env.insertIdent(base.Ident.for_text(extracted_name));
     } else {
@@ -11056,9 +10981,9 @@ fn checkMainFunction(self: *Self) std.mem.Allocator.Error!MainFunctionStatus {
             if (pattern == .ident) {
                 const ident_token = pattern.ident.ident_tok;
                 const ident_idx = self.parse_ir.tokens.resolveIdentifier(ident_token) orelse continue;
-                const ident_text = self.env.getIdent(ident_idx);
 
-                if (std.mem.eql(u8, ident_text, "main!")) {
+                // Use index comparison instead of string comparison
+                if (ident_idx.idx == self.env.idents.main_bang.idx) {
                     const region = self.parse_ir.tokenizedRegionToRegion(decl.region);
                     const expr = self.parse_ir.store.getExpr(decl.body);
 
@@ -11098,9 +11023,9 @@ fn findMatchingTypeIdent(self: *Self) ?Ident.Idx {
             // Get the type name from the header
             const header = self.parse_ir.store.getTypeHeader(type_decl.header) catch continue;
             const type_name_ident = self.parse_ir.tokens.resolveIdentifier(header.name) orelse continue;
-            const type_name_text = self.env.getIdent(type_name_ident);
 
-            if (std.mem.eql(u8, type_name_text, module_name_text)) {
+            // Use index comparison instead of string comparison
+            if (type_name_ident.idx == self.env.module_name_idx.idx) {
                 return type_name_ident;
             }
         }
