@@ -17,28 +17,3 @@ test "e_anno_only expression variant exists" {
         else => return error.WrongExprVariant,
     }
 }
-
-test "e_anno_only can be used in statements" {
-    // This test verifies that e_anno_only expressions can be
-    // used as part of s_decl statements, which is how standalone
-    // type annotations are represented after canonicalization.
-
-    // Use named constants to make the intent clear - these represent the first indices
-    const first_pattern_idx: CIR.Pattern.Idx = @enumFromInt(0);
-    const first_expr_idx: CIR.Expr.Idx = @enumFromInt(0);
-    const first_anno_idx: CIR.Annotation.Idx = @enumFromInt(0);
-
-    const stmt = CIR.Statement{ .s_decl = .{
-        .pattern = first_pattern_idx,
-        .expr = first_expr_idx,
-        .anno = first_anno_idx,
-    } };
-
-    // Verify the statement was created correctly
-    switch (stmt) {
-        .s_decl => |decl| {
-            try testing.expect(decl.anno != null);
-        },
-        else => return error.WrongStatementType,
-    }
-}

@@ -5137,7 +5137,7 @@ pub fn canonicalizeExpr(
                         .patterns = ok_branch_pat_span,
                         .value = ok_lookup_idx,
                         .guard = null,
-                        .redundant = .zero, // placeholder; set during type checking
+                        .redundant = try self.env.types.fresh(),
                     },
                     region,
                 );
@@ -5211,7 +5211,7 @@ pub fn canonicalizeExpr(
                         .patterns = err_branch_pat_span,
                         .value = return_expr_idx,
                         .guard = null,
-                        .redundant = .zero, // placeholder; set during type checking
+                        .redundant = try self.env.types.fresh(),
                     },
                     region,
                 );
@@ -5225,7 +5225,7 @@ pub fn canonicalizeExpr(
             const match_expr = Expr.Match{
                 .cond = can_cond.idx,
                 .branches = branches_span,
-                .exhaustive = .zero, // placeholder; set during type checking
+                .exhaustive = try self.env.types.fresh(),
             };
             const expr_idx = try self.env.addExpr(CIR.Expr{ .e_match = match_expr }, region);
 
@@ -5602,7 +5602,7 @@ pub fn canonicalizeExpr(
                         .patterns = branch_pat_span,
                         .value = value_idx,
                         .guard = null,
-                        .redundant = .zero, // placeholder; set during type checking
+                        .redundant = try self.env.types.fresh(),
                     },
                     region,
                 );
@@ -5622,7 +5622,7 @@ pub fn canonicalizeExpr(
             const match_expr = Expr.Match{
                 .cond = can_cond.idx,
                 .branches = branches_span,
-                .exhaustive = .zero, // placeholder; set during type checking
+                .exhaustive = try self.env.types.fresh(),
             };
             const expr_idx = try self.env.addExpr(CIR.Expr{ .e_match = match_expr }, region);
 
