@@ -9,6 +9,7 @@
 //! at runtime during init, caching the actual indices.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Ident = @import("Ident.zig");
 
 /// Definition of a common identifier: (field_name, string_value)
@@ -274,9 +275,12 @@ pub fn initIdentStore(store: *Ident.Store, gpa: std.mem.Allocator) std.mem.Alloc
         // Verify the index matches what we expect (byte offset computed at comptime)
         const expected_idx = comptime computeByteOffset(array_idx);
         if (actual_idx.idx != expected_idx) {
-            std.debug.print("Mismatch: array_idx={d}, expected_idx={d}, actual_idx={d}, string={s}\n", .{ array_idx, expected_idx, actual_idx.idx, string_value });
+            // std.debug.print is not available on freestanding targets
+            if (builtin.os.tag != .freestanding) {
+                std.debug.print("Mismatch: array_idx={d}, expected_idx={d}, actual_idx={d}, string={s}\n", .{ array_idx, expected_idx, actual_idx.idx, string_value });
+            }
+            @panic("CommonIdents index mismatch");
         }
-        std.debug.assert(actual_idx.idx == expected_idx);
     }
 }
 

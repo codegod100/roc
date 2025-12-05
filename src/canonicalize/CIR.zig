@@ -17,7 +17,6 @@ const SExprTree = base.SExprTree;
 const SExpr = base.SExpr;
 const TypeVar = types_mod.Var;
 
-
 // Re-export these from other modules for convenience
 pub const NodeStore = @import("NodeStore.zig");
 pub const Node = @import("Node.zig");
@@ -272,7 +271,7 @@ pub const WhereClause = union(enum) {
                 const attrs = tree.beginNode();
                 try tree.endNode(begin, attrs);
             },
-            .w_malformed => |malformed| {
+            .w_malformed => {
                 const begin = tree.beginNode();
                 try tree.pushStaticAtom("malformed");
 
@@ -281,7 +280,6 @@ pub const WhereClause = union(enum) {
                 const region = cir.store.getRegionAt(node_idx);
                 try cir.appendRegionInfoToSExprTreeFromRegion(tree, region);
 
-                _ = malformed;
                 const attrs = tree.beginNode();
                 try tree.endNode(begin, attrs);
             },
@@ -796,7 +794,10 @@ pub fn fromF64(f: f64) ?RocDec {
 
 /// Represents an import statement in a module
 pub const Import = struct {
-    pub const Idx = enum(u32) { _ };
+    pub const Idx = enum(u32) {
+        zero = 0,
+        _,
+    };
 
     /// Sentinel value indicating unresolved import (max u32)
     pub const UNRESOLVED_MODULE: u32 = std.math.maxInt(u32);
@@ -839,7 +840,7 @@ pub const Import = struct {
         pub fn getOrPutWithIdent(self: *Store, allocator: std.mem.Allocator, strings: *base.StringLiteral.Store, module_name: []const u8, ident_idx: ?base.Ident.Idx) !Import.Idx {
             // Search existing imports for a match by string comparison
             // StringLiteral.Store doesn't deduplicate, so we must compare strings
-            const import_count = self.imports.len();
+            const import_count: usize = @intCast(self.imports.len());
             for (0..import_count) |i| {
                 const existing_str_idx = self.imports.items.items[i];
                 const existing_name = strings.get(existing_str_idx);
