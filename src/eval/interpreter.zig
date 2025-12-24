@@ -4803,6 +4803,24 @@ pub const Interpreter = struct {
             .f32_to_str => return self.floatToStr(f32, args, roc_ops),
             .f64_to_str => return self.floatToStr(f64, args, roc_ops),
 
+            .dict_to_str => {
+                // Dict.to_str : Dict(k, v) -> Str
+                std.debug.assert(args.len == 1); // expects 1 argument: Dict
+
+                const dict_arg = args[0];
+                std.debug.assert(dict_arg.ptr != null);
+
+                // Render the dict value using the existing rendering infrastructure
+                const rendered = try self.renderValueRocWithType(dict_arg, dict_arg.rt_var, roc_ops);
+                defer self.allocator.free(rendered);
+
+                const str_rt_var = try self.getCanonicalStrRuntimeVar();
+                const value = try self.pushStr(str_rt_var);
+                const roc_str_ptr: *RocStr = @ptrCast(@alignCast(value.ptr.?));
+                roc_str_ptr.* = RocStr.fromSlice(rendered, roc_ops);
+                return value;
+            },
+
             // U8 conversion operations
             .u8_to_i8_wrap => return self.intConvertWrap(u8, i8, args),
             .u8_to_i8_try => return self.intConvertTry(u8, i8, args, return_rt_var),
