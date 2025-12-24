@@ -519,6 +519,7 @@ pub const Expr = union(enum) {
         list_drop_at,
         list_sublist,
         list_append,
+        list_to_str,
 
         // Set operations
         // set_is_empty,
@@ -891,6 +892,7 @@ pub const Expr = union(enum) {
                 .list_append => &.{ .consume, .borrow }, // list consumed, element borrowed
                 .list_drop_at => &.{ .consume, .borrow }, // list consumed, index is value type
                 .list_sublist => &.{ .consume, .borrow }, // list consumed, {start, len} record is value type
+                .list_to_str => &.{.consume}, // list consumed, converted to string
 
                 // Bool operations - value types
                 .bool_is_eq => &.{ .borrow, .borrow },

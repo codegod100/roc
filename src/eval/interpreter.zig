@@ -1756,8 +1756,8 @@ pub const Interpreter = struct {
                 out.is_initialized = true;
                 return out;
             },
-            .str_from_utf8 => {
-                // Str.from_utf8 : List(U8) -> Try(Str, [BadUtf8({ problem: Utf8Problem, index: U64 })])
+            .str_from_utf8, .list_to_str => {
+                // Str.from_utf8 / List.to_str : List(U8) -> Try(Str, [BadUtf8({ problem: Utf8Problem, index: U64 })])
                 std.debug.assert(args.len == 1);
 
                 const list_arg = args[0];
