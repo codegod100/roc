@@ -245,6 +245,8 @@ Builtin :: [].{
 			$list
 		}
 
+		to_str : List(U8) -> Try(Str, [BadUtf8({ index: U64, problem: Str.Utf8Problem }), ..others])
+
 	}
 
 	Bool := [False, True].{
