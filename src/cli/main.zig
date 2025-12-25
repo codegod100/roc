@@ -1653,6 +1653,38 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         };
     }
 
+    // Discover sibling .roc files in the app directory for local module imports
+    var app_sibling_modules = std.ArrayList([]const u8).empty;
+    defer {
+        for (app_sibling_modules.items) |name| {
+            ctx.gpa.free(name);
+        }
+        app_sibling_modules.deinit(ctx.gpa);
+    }
+
+    const app_basename = std.fs.path.basename(roc_file_path);
+    if (std.fs.cwd().openDir(app_dir, .{ .iterate = true })) |*dir| {
+        defer @constCast(dir).close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".roc")) continue;
+            // Skip the app file itself and main.roc
+            if (std.mem.eql(u8, entry.name, app_basename)) continue;
+            if (std.mem.eql(u8, entry.name, "main.roc")) continue;
+
+            // Extract module name without .roc extension
+            const module_name = entry.name[0 .. entry.name.len - 4];
+            const owned_name = ctx.gpa.dupe(u8, module_name) catch continue;
+            app_sibling_modules.append(ctx.gpa, owned_name) catch {
+                ctx.gpa.free(owned_name);
+                continue;
+            };
+        }
+    } else |_| {
+        // If we can't open the directory, continue without sibling discovery
+    }
+
     // IMPORTANT: Create header FIRST before any module compilation.
     // The interpreter_shim expects the Header to be at FIRST_ALLOC_OFFSET (504).
     // If we compile modules first, they would occupy that offset and break
@@ -1673,8 +1705,8 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
     const shm_base_addr = @intFromPtr(shm.base_ptr);
     header_ptr.parent_base_addr = shm_base_addr;
 
-    // Module count = 1 (app) + number of platform modules
-    const total_module_count: u32 = 1 + @as(u32, @intCast(exposed_modules.items.len));
+    // Module count = 1 (app) + number of platform modules + number of sibling modules
+    const total_module_count: u32 = 1 + @as(u32, @intCast(exposed_modules.items.len)) + @as(u32, @intCast(app_sibling_modules.items.len));
     header_ptr.module_count = total_module_count;
 
     // Allocate array for module env offsets
@@ -1835,6 +1867,43 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         }
     }
 
+    // Compile sibling modules (local modules in the app directory)
+    var sibling_env_ptrs = try ctx.gpa.alloc(*ModuleEnv, app_sibling_modules.items.len);
+    defer ctx.gpa.free(sibling_env_ptrs);
+
+    for (app_sibling_modules.items, 0..) |module_name, i| {
+        const module_filename = try std.fmt.allocPrint(ctx.gpa, "{s}.roc", .{module_name});
+        defer ctx.gpa.free(module_filename);
+
+        const module_path = try std.fs.path.join(ctx.gpa, &[_][]const u8{ app_dir, module_filename });
+        defer ctx.gpa.free(module_path);
+
+        if (comptime trace_modules) {
+            std.debug.print("[TRACE-MODULES] Compiling sibling module: {s}\n", .{module_path});
+        }
+
+        // Compile sibling module with platform modules as dependencies
+        const module_env_ptr = compileModuleToSharedMemory(
+            ctx,
+            module_path,
+            module_name,
+            shm_allocator,
+            &builtin_modules,
+            platform_env_ptrs,
+        ) catch |err| {
+            std.log.warn("Failed to compile sibling module {s}: {}", .{ module_name, err });
+            // Create a placeholder null entry
+            sibling_env_ptrs[i] = undefined;
+            continue;
+        };
+
+        sibling_env_ptrs[i] = module_env_ptr;
+
+        // Store sibling module env offset (after platform modules)
+        const sibling_offset = exposed_modules.items.len + i;
+        module_env_offsets_ptr[sibling_offset] = @intFromPtr(module_env_ptr) - @intFromPtr(shm.base_ptr);
+    }
+
     // Now compile the app module
     if (comptime trace_modules) {
         std.debug.print("[TRACE-MODULES] Compiling app: {s}\n", .{roc_file_path});
@@ -1865,7 +1934,7 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
     // SharedMemoryAllocator is a bump allocator, so normalize in-place and keep any trailing bytes unused.
     app_source = base.source_utils.normalizeLineEndings(app_source);
 
-    const app_basename = std.fs.path.basename(roc_file_path);
+    // Note: app_basename is already defined above when discovering sibling modules
     const app_module_name = try shm_allocator.dupe(u8, app_basename);
 
     var app_env = try ModuleEnv.init(shm_allocator, app_source);
@@ -1922,6 +1991,47 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         // For user/platform modules, the qualified name is just the module name itself
         const qualified_ident = try app_env.insertIdent(base.Ident.for_text(mod_env.module_name));
         try app_module_envs_map.put(name, .{ .env = mod_env, .qualified_type_ident = qualified_ident });
+    }
+
+    // Add sibling modules to the module envs map for canonicalization
+    for (app_sibling_modules.items, 0..) |module_name, i| {
+        const sibling_env = sibling_env_ptrs[i];
+        // Skip any modules that failed to compile
+        if (@intFromPtr(sibling_env) == 0) continue;
+
+        const name = try app_env.insertIdent(base.Ident.for_text(module_name));
+        const qualified_ident = try app_env.insertIdent(base.Ident.for_text(module_name));
+
+        // Check if this is a type module (defines a type with the same name as the module)
+        const type_ident_in_module = sibling_env.common.findIdent(module_name);
+        const type_node_idx: ?u16 = if (type_ident_in_module) |ident|
+            sibling_env.getExposedNodeIndexById(ident)
+        else
+            null;
+
+        if (type_node_idx) |node_idx| {
+            try app_module_envs_map.put(name, .{
+                .env = sibling_env,
+                .statement_idx = @enumFromInt(node_idx),
+                .qualified_type_ident = qualified_ident,
+            });
+        } else {
+            try app_module_envs_map.put(name, .{ .env = sibling_env, .qualified_type_ident = qualified_ident });
+        }
+
+        // Also add with .roc suffix for resolved lookups
+        const module_name_with_roc = try std.fmt.allocPrint(ctx.gpa, "{s}.roc", .{module_name});
+        defer ctx.gpa.free(module_name_with_roc);
+        const resolved_ident = try app_env.insertIdent(base.Ident.for_text(module_name_with_roc));
+        if (type_node_idx) |node_idx| {
+            try app_module_envs_map.put(resolved_ident, .{
+                .env = sibling_env,
+                .statement_idx = @enumFromInt(node_idx),
+                .qualified_type_ident = qualified_ident,
+            });
+        } else {
+            try app_module_envs_map.put(resolved_ident, .{ .env = sibling_env, .qualified_type_ident = qualified_ident });
+        }
     }
 
     // Add platform modules to the module envs map for canonicalization
@@ -2037,6 +2147,12 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
     try app_imported_envs.append(ctx.gpa, builtin_modules.builtin_module.env);
     for (platform_env_ptrs) |penv| {
         try app_imported_envs.append(ctx.gpa, penv);
+    }
+    // Add sibling modules to imported envs
+    for (sibling_env_ptrs) |senv| {
+        // Skip any modules that failed to compile
+        if (@intFromPtr(senv) == 0) continue;
+        try app_imported_envs.append(ctx.gpa, senv);
     }
 
     // Resolve imports - map each import to its index in app_imported_envs
