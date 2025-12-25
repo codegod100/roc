@@ -3120,6 +3120,95 @@ fn compileAndSerializeModulesForEmbedding(
         try compiled_modules.append(compiled);
     }
 
+    // Discover sibling .roc files in the app directory for local module imports
+    // Only considers files starting with uppercase letter (Roc module naming convention)
+    var app_sibling_modules = std.ArrayList([]const u8).empty;
+    defer {
+        for (app_sibling_modules.items) |name| {
+            ctx.gpa.free(name);
+        }
+        app_sibling_modules.deinit(ctx.gpa);
+    }
+
+    const app_basename = std.fs.path.basename(roc_file_path);
+    if (std.fs.cwd().openDir(app_dir, .{ .iterate = true })) |*dir| {
+        defer @constCast(dir).close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".roc")) continue;
+            // Skip the app file itself and main.roc
+            if (std.mem.eql(u8, entry.name, app_basename)) continue;
+            if (std.mem.eql(u8, entry.name, "main.roc")) continue;
+            // Only consider files starting with uppercase (module naming convention)
+            // This skips test files like test_foo.roc, letters_test.roc, etc.
+            if (entry.name.len == 0 or entry.name[0] < 'A' or entry.name[0] > 'Z') continue;
+
+            // Extract module name without .roc extension
+            const module_name = entry.name[0 .. entry.name.len - 4];
+            const owned_name = ctx.gpa.dupe(u8, module_name) catch continue;
+            app_sibling_modules.append(ctx.gpa, owned_name) catch {
+                ctx.gpa.free(owned_name);
+                continue;
+            };
+        }
+    } else |_| {
+        // If we can't open the directory, continue without sibling discovery
+    }
+
+    // Compile app sibling modules (local modules in the app directory)
+    var app_sibling_env_ptrs = try ctx.gpa.alloc(*ModuleEnv, app_sibling_modules.items.len);
+    defer ctx.gpa.free(app_sibling_env_ptrs);
+
+    // Track starting index of sibling modules
+    const sibling_start_index = compiled_modules.items.len;
+
+    for (app_sibling_modules.items, 0..) |module_name, i| {
+        const module_filename = try std.fmt.allocPrint(ctx.gpa, "{s}.roc", .{module_name});
+        defer ctx.gpa.free(module_filename);
+
+        const module_path = try std.fs.path.join(ctx.gpa, &[_][]const u8{ app_dir, module_filename });
+        defer ctx.gpa.free(module_path);
+
+        if (comptime trace_modules) {
+            std.debug.print("[TRACE-MODULES] Compiling app sibling module: {s}\n", .{module_path});
+        }
+
+        // Get all platform module env pointers
+        var all_platform_env_ptrs = try ctx.gpa.alloc(*ModuleEnv, sibling_start_index);
+        defer ctx.gpa.free(all_platform_env_ptrs);
+        for (compiled_modules.items[0..sibling_start_index], 0..) |*m, j| {
+            all_platform_env_ptrs[j] = &m.env;
+        }
+
+        const compiled = compileModuleForSerialization(
+            ctx,
+            module_path,
+            module_name,
+            &builtin_modules,
+            all_platform_env_ptrs,
+            sorted_modules,
+        ) catch |err| {
+            std.log.warn("Failed to compile sibling module {s}: {}", .{ module_name, err });
+            app_sibling_env_ptrs[i] = undefined;
+            continue;
+        };
+
+        total_error_count += compiled.error_count;
+        try compiled_modules.append(compiled);
+        app_sibling_env_ptrs[i] = &compiled_modules.items[compiled_modules.items.len - 1].env;
+    }
+
+    // Build type module names including both platform modules and sibling modules
+    var all_type_module_names = try ctx.gpa.alloc([]const u8, sorted_modules.len + app_sibling_modules.items.len);
+    defer ctx.gpa.free(all_type_module_names);
+    for (sorted_modules, 0..) |name, i| {
+        all_type_module_names[i] = name;
+    }
+    for (app_sibling_modules.items, 0..) |name, i| {
+        all_type_module_names[sorted_modules.len + i] = name;
+    }
+
     // Compile app module
     {
         if (comptime trace_modules) {
@@ -3138,7 +3227,7 @@ fn compileAndSerializeModulesForEmbedding(
             "app",
             &builtin_modules,
             all_env_ptrs,
-            sorted_modules, // Pass type module names in same order as all_env_ptrs
+            all_type_module_names, // Pass all type module names including siblings
         );
         compiled.is_app = true;
         total_error_count += compiled.error_count;
