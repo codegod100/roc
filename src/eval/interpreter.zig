@@ -8114,12 +8114,23 @@ pub const Interpreter = struct {
                 return true;
             },
             .applied_tag => |tag_pat| {
+                // Check if either value_rt_var or value.rt_var resolves to a tag_union.
+                // This handles cases where the expected type (value_rt_var) doesn't match
+                // the actual value's type (value.rt_var).
                 const union_resolved = self.resolveBaseVar(value_rt_var);
-                if (union_resolved.desc.content != .structure or union_resolved.desc.content.structure != .tag_union) return false;
+                const value_resolved = self.resolveBaseVar(value.rt_var);
+                const is_union = (union_resolved.desc.content == .structure and union_resolved.desc.content.structure == .tag_union);
+                const value_is_union = (value_resolved.desc.content == .structure and value_resolved.desc.content.structure == .tag_union);
+                if (!is_union and !value_is_union) return false;
 
                 var tag_list = std.array_list.AlignedManaged(types.Tag, null).init(self.allocator);
                 defer tag_list.deinit();
-                try self.appendUnionTags(value_rt_var, &tag_list);
+                // Try value_rt_var first, fall back to value.rt_var
+                if (is_union) {
+                    try self.appendUnionTags(value_rt_var, &tag_list);
+                } else {
+                    try self.appendUnionTags(value.rt_var, &tag_list);
+                }
 
                 // Build tag list from value's original rt_var.
                 // This is critical when a value was created with a narrower type (e.g., [Ok])
@@ -8130,10 +8141,15 @@ pub const Interpreter = struct {
                 defer value_tag_list.deinit();
                 try self.appendUnionTags(value.rt_var, &value_tag_list);
 
-                // Use value.rt_var (the value's actual type) for extracting tag data, not value_rt_var
-                // (the expected/pattern type). The value's discriminant was written based on its actual
-                // type's tag ordering, so we must use that same type to read it correctly.
-                const tag_data = try self.extractTagValue(value, value.rt_var);
+                // Use value.rt_var for extractTagValue since the value's discriminant is based on
+                // its original type, not the expected type from the pattern match.
+                // Fall back to value_rt_var if value.rt_var doesn't work.
+                const tag_data = self.extractTagValue(value, value.rt_var) catch |err| blk: {
+                    if (err == error.TypeMismatch) {
+                        break :blk self.extractTagValue(value, value_rt_var) catch return false;
+                    }
+                    return err;
+                };
 
                 // Translate pattern's tag ident to runtime env for direct comparison
                 const expected_name_str = self.env.getIdent(tag_pat.name);
