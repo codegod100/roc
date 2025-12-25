@@ -258,6 +258,12 @@ Builtin :: [].{
 
 		is_eq : Bool, Bool -> Bool
 
+		to_str : Bool -> Str
+		to_str = |bool| match bool {
+			Bool.True => "True"
+			Bool.False => "False"
+		}
+
 		# encoder : Bool -> Encoder(fmt, [])
 		# 	where [fmt implements EncoderFormatting]
 		# encoder =
