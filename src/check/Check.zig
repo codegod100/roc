@@ -5182,7 +5182,7 @@ fn checkNominalTypeUsage(
 fn handleRecursiveConstraint(
     self: *Self,
     var_: types_mod.Var,
-    depth: usize,
+    depth: u32,
     env: *Env,
 ) std.mem.Allocator.Error!void {
     // Create the RecursionVar content that points to the original structure
@@ -5236,7 +5236,7 @@ fn checkDeferredStaticDispatchConstraints(self: *Self, env: *Env) std.mem.Alloca
         for (self.constraint_check_stack.items, 0..) |stack_var, depth| {
             if (stack_var == dispatcher_resolved.var_) {
                 // Found recursion! Create a RecursionVar to handle this properly
-                try self.handleRecursiveConstraint(dispatcher_resolved.var_, depth, env);
+                try self.handleRecursiveConstraint(dispatcher_resolved.var_, @intCast(depth), env);
                 continue;
             }
         }
