@@ -252,6 +252,8 @@ Builtin :: [].{
 			List.fold(list, Item.default(), |acc, elem| acc + elem)
 		}
 
+		to_str : List(U8) -> Try(Str, [BadUtf8({ index: U64, problem: Str.Utf8Problem }), ..others])
+
 	}
 
 	Bool := [False, True].{
@@ -262,6 +264,12 @@ Builtin :: [].{
 		}
 
 		is_eq : Bool, Bool -> Bool
+
+		to_str : Bool -> Str
+		to_str = |bool| match bool {
+			Bool.True => "True"
+			Bool.False => "False"
+		}
 
 		# encoder : Bool -> Encoder(fmt, [])
 		# 	where [fmt implements EncoderFormatting]
@@ -345,11 +353,42 @@ Builtin :: [].{
 		}
 	}
 
-	Dict :: [EmptyDict].{}
+	Dict(k, v) :: {
+		buckets : List({ dist_and_fingerprint : U32, data_index : U32 }),
+		data : List((k, v)),
+		max_bucket_capacity : U64,
+		max_load_factor : F32,
+		shifts : U8,
+	}.{
+		to_str : Dict(k, v) -> Str
+	}
 
 	Set(item) :: [].{
 		is_eq : Set(item), Set(item) -> Bool
 		is_eq = |_a, _b| Bool.False
+	}
+
+	Decode :: [].{
+		# Decode a List U8 of utf-8 bytes and return a Result with no leftover bytes expected
+		from_bytes : List(U8), fmt -> Try(val, [Leftover(List(U8)), TooShort, ..others])
+			where [val.decoder : fmt -> val, fmt.decode_bytes : fmt, List(U8) -> { result: Try(val, [TooShort, ..others]), rest: List(U8) }]
+		from_bytes = |bytes, fmt| {
+			decoded = fmt.decode_bytes(bytes)
+			match decoded.result {
+				Ok(val) =>
+					if List.is_empty(decoded.rest) {
+						Ok(val)
+					} else {
+						Err(Leftover(decoded.rest))
+					}
+				Err(TooShort) => Err(TooShort)
+			}
+		}
+
+		# Decode a List U8 of utf-8 bytes and return a DecodeResult with leftover bytes
+		from_bytes_partial : List(U8), fmt -> { result: Try(val, [TooShort, ..others]), rest: List(U8) }
+			where [val.decoder : fmt -> val, fmt.decode_bytes : fmt, List(U8) -> { result: Try(val, [TooShort, ..others]), rest: List(U8) }]
+		from_bytes_partial = |bytes, fmt| fmt.decode_bytes(bytes)
 	}
 
 	Num :: {}.{

@@ -5182,7 +5182,7 @@ fn checkNominalTypeUsage(
 fn handleRecursiveConstraint(
     self: *Self,
     var_: types_mod.Var,
-    depth: usize,
+    depth: u32,
     env: *Env,
 ) std.mem.Allocator.Error!void {
     // Create the RecursionVar content that points to the original structure
@@ -5236,7 +5236,7 @@ fn checkDeferredStaticDispatchConstraints(self: *Self, env: *Env) std.mem.Alloca
         for (self.constraint_check_stack.items, 0..) |stack_var, depth| {
             if (stack_var == dispatcher_resolved.var_) {
                 // Found recursion! Create a RecursionVar to handle this properly
-                try self.handleRecursiveConstraint(dispatcher_resolved.var_, depth, env);
+                try self.handleRecursiveConstraint(dispatcher_resolved.var_, @intCast(depth), env);
                 continue;
             }
         }
@@ -5511,6 +5511,16 @@ fn checkDeferredStaticDispatchConstraints(self: *Self, env: *Env) std.mem.Alloca
                             env,
                         );
                     }
+                } else if (constraint.fn_name == self.cir.idents.to_str) {
+                    // to_str is supported on all types via Str.inspect semantics
+                    // Unify return type with Str
+                    const resolved_constraint = self.types.resolveVar(constraint.fn_var);
+                    const mb_resolved_func = resolved_constraint.desc.content.unwrapFunc();
+                    if (mb_resolved_func) |resolved_func| {
+                        const region = self.getRegionAt(deferred_constraint.var_);
+                        const str_var = try self.freshStr(env, region);
+                        _ = try self.unify(str_var, resolved_func.ret, env);
+                    }
                 } else {
                     // Other methods are not supported on anonymous types
                     try self.reportConstraintError(
@@ -5537,6 +5547,16 @@ fn checkDeferredStaticDispatchConstraints(self: *Self, env: *Env) std.mem.Alloca
                             constraint,
                             env,
                         );
+                    } else if (constraint.fn_name == self.cir.idents.to_str) {
+                        // to_str is supported on all types via Str.inspect semantics
+                        // Unify return type with Str
+                        const resolved_constraint = self.types.resolveVar(constraint.fn_var);
+                        const mb_resolved_func = resolved_constraint.desc.content.unwrapFunc();
+                        if (mb_resolved_func) |resolved_func| {
+                            const region = self.getRegionAt(deferred_constraint.var_);
+                            const str_var = try self.freshStr(env, region);
+                            _ = try self.unify(str_var, resolved_func.ret, env);
+                        }
                     } else {
                         try self.reportConstraintError(
                             deferred_constraint.var_,

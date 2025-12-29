@@ -862,7 +862,9 @@ pub const RecursionInfo = struct {
 
     /// The depth in the constraint check stack where recursion was detected
     /// This helps with debugging and understanding the recursion structure
-    depth: usize,
+    /// Note: Using u32 instead of usize for platform-independent serialization
+    /// (usize is 8 bytes on x64 but 4 bytes on wasm32)
+    depth: u32,
 };
 
 /// Represents a static dispatch constraints on a variable
