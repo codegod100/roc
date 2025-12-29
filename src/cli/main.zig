@@ -1653,6 +1653,38 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         };
     }
 
+    // Discover sibling .roc files in the app directory for local module imports
+    var app_sibling_modules = std.ArrayList([]const u8).empty;
+    defer {
+        for (app_sibling_modules.items) |name| {
+            ctx.gpa.free(name);
+        }
+        app_sibling_modules.deinit(ctx.gpa);
+    }
+
+    const app_basename = std.fs.path.basename(roc_file_path);
+    if (std.fs.cwd().openDir(app_dir, .{ .iterate = true })) |*dir| {
+        defer @constCast(dir).close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".roc")) continue;
+            // Skip the app file itself and main.roc
+            if (std.mem.eql(u8, entry.name, app_basename)) continue;
+            if (std.mem.eql(u8, entry.name, "main.roc")) continue;
+
+            // Extract module name without .roc extension
+            const module_name = entry.name[0 .. entry.name.len - 4];
+            const owned_name = ctx.gpa.dupe(u8, module_name) catch continue;
+            app_sibling_modules.append(ctx.gpa, owned_name) catch {
+                ctx.gpa.free(owned_name);
+                continue;
+            };
+        }
+    } else |_| {
+        // If we can't open the directory, continue without sibling discovery
+    }
+
     // IMPORTANT: Create header FIRST before any module compilation.
     // The interpreter_shim expects the Header to be at FIRST_ALLOC_OFFSET (504).
     // If we compile modules first, they would occupy that offset and break
@@ -1673,14 +1705,20 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
     const shm_base_addr = @intFromPtr(shm.base_ptr);
     header_ptr.parent_base_addr = shm_base_addr;
 
-    // Module count = 1 (app) + number of platform modules
-    const total_module_count: u32 = 1 + @as(u32, @intCast(exposed_modules.items.len));
-    header_ptr.module_count = total_module_count;
+    // Module count = 1 (app) + number of platform modules + number of sibling modules
+    // We over-allocate module_env_offsets_ptr with a max size since we discover sibling
+    // imports AFTER parsing the app (to avoid parsing twice). The actual count is set later.
+    const platform_module_count: u32 = @intCast(exposed_modules.items.len);
+    const max_sibling_modules: u32 = 64; // Reasonable max for sibling modules
+    const max_module_count: u32 = 1 + platform_module_count + max_sibling_modules;
 
-    // Allocate array for module env offsets
-    const module_env_offsets_ptr = try shm_allocator.alloc(u64, total_module_count);
+    // Allocate array for module env offsets (over-allocated, actual count set later)
+    const module_env_offsets_ptr = try shm_allocator.alloc(u64, max_module_count);
     const module_envs_offset_location = @intFromPtr(module_env_offsets_ptr.ptr) - @intFromPtr(shm.base_ptr);
     header_ptr.module_envs_offset = module_envs_offset_location;
+
+    // Track actual sibling count (discovered after app parsing)
+    var actual_sibling_count: u32 = 0;
 
     // Compile platform sibling modules FIRST (Stdout, Stderr, Stdin, etc.)
     // This must happen before platform main.roc so that when main.roc is canonicalized,
@@ -1835,6 +1873,43 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         }
     }
 
+    // Compile sibling modules (local modules in the app directory)
+    var sibling_env_ptrs = try ctx.gpa.alloc(*ModuleEnv, app_sibling_modules.items.len);
+    defer ctx.gpa.free(sibling_env_ptrs);
+
+    for (app_sibling_modules.items, 0..) |module_name, i| {
+        const module_filename = try std.fmt.allocPrint(ctx.gpa, "{s}.roc", .{module_name});
+        defer ctx.gpa.free(module_filename);
+
+        const module_path = try std.fs.path.join(ctx.gpa, &[_][]const u8{ app_dir, module_filename });
+        defer ctx.gpa.free(module_path);
+
+        if (comptime trace_modules) {
+            std.debug.print("[TRACE-MODULES] Compiling sibling module: {s}\n", .{module_path});
+        }
+
+        // Compile sibling module with platform modules as dependencies
+        const module_env_ptr = compileModuleToSharedMemory(
+            ctx,
+            module_path,
+            module_name,
+            shm_allocator,
+            &builtin_modules,
+            platform_env_ptrs,
+        ) catch |err| {
+            std.log.warn("Failed to compile sibling module {s}: {}", .{ module_name, err });
+            // Create a placeholder null entry
+            sibling_env_ptrs[i] = undefined;
+            continue;
+        };
+
+        sibling_env_ptrs[i] = module_env_ptr;
+
+        // Store sibling module env offset (after platform modules)
+        const sibling_offset = exposed_modules.items.len + i;
+        module_env_offsets_ptr[sibling_offset] = @intFromPtr(module_env_ptr) - @intFromPtr(shm.base_ptr);
+    }
+
     // Now compile the app module
     if (comptime trace_modules) {
         std.debug.print("[TRACE-MODULES] Compiling app: {s}\n", .{roc_file_path});
@@ -1865,7 +1940,7 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
     // SharedMemoryAllocator is a bump allocator, so normalize in-place and keep any trailing bytes unused.
     app_source = base.source_utils.normalizeLineEndings(app_source);
 
-    const app_basename = std.fs.path.basename(roc_file_path);
+    // Note: app_basename is already defined above when discovering sibling modules
     const app_module_name = try shm_allocator.dupe(u8, app_basename);
 
     var app_env = try ModuleEnv.init(shm_allocator, app_source);
@@ -1924,6 +1999,47 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         try app_module_envs_map.put(name, .{ .env = mod_env, .qualified_type_ident = qualified_ident });
     }
 
+    // Add sibling modules to the module envs map for canonicalization
+    for (app_sibling_modules.items, 0..) |module_name, i| {
+        const sibling_env = sibling_env_ptrs[i];
+        // Skip any modules that failed to compile
+        if (@intFromPtr(sibling_env) == 0) continue;
+
+        const name = try app_env.insertIdent(base.Ident.for_text(module_name));
+        const qualified_ident = try app_env.insertIdent(base.Ident.for_text(module_name));
+
+        // Check if this is a type module (defines a type with the same name as the module)
+        const type_ident_in_module = sibling_env.common.findIdent(module_name);
+        const type_node_idx: ?u16 = if (type_ident_in_module) |ident|
+            sibling_env.getExposedNodeIndexById(ident)
+        else
+            null;
+
+        if (type_node_idx) |node_idx| {
+            try app_module_envs_map.put(name, .{
+                .env = sibling_env,
+                .statement_idx = @enumFromInt(node_idx),
+                .qualified_type_ident = qualified_ident,
+            });
+        } else {
+            try app_module_envs_map.put(name, .{ .env = sibling_env, .qualified_type_ident = qualified_ident });
+        }
+
+        // Also add with .roc suffix for resolved lookups
+        const module_name_with_roc = try std.fmt.allocPrint(ctx.gpa, "{s}.roc", .{module_name});
+        defer ctx.gpa.free(module_name_with_roc);
+        const resolved_ident = try app_env.insertIdent(base.Ident.for_text(module_name_with_roc));
+        if (type_node_idx) |node_idx| {
+            try app_module_envs_map.put(resolved_ident, .{
+                .env = sibling_env,
+                .statement_idx = @enumFromInt(node_idx),
+                .qualified_type_ident = qualified_ident,
+            });
+        } else {
+            try app_module_envs_map.put(resolved_ident, .{ .env = sibling_env, .qualified_type_ident = qualified_ident });
+        }
+    }
+
     // Add platform modules to the module envs map for canonicalization
     // Two keys are needed for each platform module:
     // 1. "pf.Stdout" - used during import validation (import pf.Stdout)
@@ -1977,6 +2093,106 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         const resolved_ident = try app_env.insertIdent(base.Ident.for_text(module_name_with_roc));
         try app_module_envs_map.put(resolved_ident, auto_type);
     }
+
+    // Compile sibling .roc files BEFORE app canonicalization.
+    // This ensures that when the app references `Hello.say`, the sibling module is fully
+    // compiled and its exports are available for lookup.
+    //
+    // LAZY LOADING: We extract imports from the already-parsed app_parse_ast to avoid
+    // parsing the app file twice. Only sibling modules that are actually imported are compiled.
+    var sibling_env_ptrs = std.ArrayList(*ModuleEnv).empty;
+    defer sibling_env_ptrs.deinit(ctx.gpa);
+
+    // Extract sibling imports from the already-parsed app AST
+    const sibling_imports = try compile.module_discovery.extractImportsFromAST(&app_parse_ast, ctx.gpa);
+    defer {
+        for (sibling_imports) |imp| ctx.gpa.free(imp);
+        ctx.gpa.free(sibling_imports);
+    }
+
+    // Filter to only imports that have corresponding files and aren't the app itself
+    var sibling_names = std.ArrayList([]const u8).empty;
+    defer sibling_names.deinit(ctx.gpa);
+    // Note: we don't free the strings in sibling_names since they point to sibling_imports
+
+    // Use app_basename already defined at line 1874
+    const app_name_no_ext = if (std.mem.endsWith(u8, app_basename, ".roc"))
+        app_basename[0 .. app_basename.len - 4]
+    else
+        app_basename;
+
+    for (sibling_imports) |import_name| {
+        // Skip self-import and "main"
+        if (std.mem.eql(u8, import_name, app_name_no_ext)) continue;
+        if (std.mem.eql(u8, import_name, "main")) continue;
+
+        // Check if file exists
+        if (try moduleNameToFilePath(import_name, app_dir, ctx.gpa)) |path| {
+            ctx.gpa.free(path); // Just checking existence
+            try sibling_names.append(ctx.gpa, import_name); // Points to sibling_imports memory
+        }
+    }
+
+    if (sibling_names.items.len > 0) {
+        // Sort sibling modules by dependency order
+        const sorted_siblings = try sortPlatformModulesByDependency(ctx, sibling_names.items, app_dir);
+        defer ctx.gpa.free(sorted_siblings);
+
+        // Compile each sibling module in dependency order
+        for (sorted_siblings, 0..) |sibling_name, i| {
+            // Handle nested modules: "Foo.Bar" -> "Foo/Bar.roc"
+            const sibling_path = try moduleNameToFilePath(sibling_name, app_dir, ctx.gpa) orelse {
+                // File doesn't exist - this shouldn't happen since we checked earlier
+                std.log.warn("Sibling module file not found: {s}", .{sibling_name});
+                continue;
+            };
+            defer ctx.gpa.free(sibling_path);
+
+            // Pass previously compiled siblings for transitive imports
+            const prev_siblings = sibling_env_ptrs.items[0..i];
+            const sibling_env = try compileModuleToSharedMemory(
+                ctx,
+                sibling_path,
+                sibling_name,
+                shm_allocator,
+                &builtin_modules,
+                prev_siblings,
+            );
+            try sibling_env_ptrs.append(ctx.gpa, sibling_env);
+
+            // Store sibling offset at index [platform_module_count + i]
+            const sibling_offset_idx = platform_module_count + @as(u32, @intCast(i));
+            module_env_offsets_ptr[sibling_offset_idx] = @intFromPtr(sibling_env) - @intFromPtr(shm.base_ptr);
+
+            // Add to app's module_envs_map with real sibling env
+            const sibling_ident = try app_env.insertIdent(base.Ident.for_text(sibling_name));
+
+            // Check if this module is a "type module" (defines a type with the same name)
+            const type_ident_in_module = sibling_env.common.findIdent(sibling_name);
+            const type_node_idx: ?u16 = if (type_ident_in_module) |ident|
+                sibling_env.getExposedNodeIndexById(ident)
+            else
+                null;
+
+            if (type_node_idx) |node_idx| {
+                try app_module_envs_map.put(sibling_ident, .{
+                    .env = sibling_env,
+                    .statement_idx = @enumFromInt(node_idx),
+                    .qualified_type_ident = sibling_ident,
+                });
+            } else {
+                try app_module_envs_map.put(sibling_ident, .{
+                    .env = sibling_env,
+                    .qualified_type_ident = sibling_ident,
+                });
+            }
+        }
+        actual_sibling_count = @intCast(sorted_siblings.len);
+    }
+
+    // Set the actual module count now that we know how many siblings were compiled
+    const total_module_count: u32 = 1 + platform_module_count + actual_sibling_count;
+    header_ptr.module_count = total_module_count;
 
     var app_canonicalizer = try Can.init(&app_env, &app_parse_ast, &app_module_envs_map);
     defer app_canonicalizer.deinit();
@@ -2038,6 +2254,12 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
     for (platform_env_ptrs) |penv| {
         try app_imported_envs.append(ctx.gpa, penv);
     }
+    // Add sibling modules for type checking
+    for (sibling_env_ptrs.items) |senv| {
+        // Skip any modules that failed to compile
+        if (@intFromPtr(senv) == 0) continue;
+        try app_imported_envs.append(ctx.gpa, senv);
+    }
 
     // Resolve imports - map each import to its index in app_imported_envs
     app_env.imports.resolveImports(&app_env, app_imported_envs.items);
@@ -2045,7 +2267,13 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
     var app_checker = try Check.init(shm_allocator, &app_env.types, &app_env, app_imported_envs.items, &app_module_envs_map, &app_env.store.regions, app_builtin_ctx);
     defer app_checker.deinit();
 
+    // Debug: Log before type checking
+    std.debug.print("IPC BEFORE CHECK: module=\"{s}\" types.len={d}\n", .{ app_env.module_name, app_env.types.len() });
+
     try app_checker.checkFile();
+
+    // Debug: Log after type checking
+    std.debug.print("IPC AFTER CHECK: module=\"{s}\" types.len={d}\n", .{ app_env.module_name, app_env.types.len() });
 
     // Check that app exports match platform requirements (if platform exists)
     if (platform_main_env) |penv| {
@@ -2087,6 +2315,9 @@ pub fn setupSharedMemoryWithModuleEnv(ctx: *CliContext, roc_file_path: []const u
         renderTypeProblems(ctx, &app_checker, &app_env, roc_file_path)
     else
         0;
+
+    // Debug: Log type store size after type checking (IPC mode)
+    std.debug.print("IPC COMPILE: module=\"{s}\" types.len={d}\n", .{ app_env.module_name, app_env.types.len() });
 
     app_env_ptr.* = app_env;
 
@@ -2185,6 +2416,48 @@ fn validatePlatformHeader(ctx: *CliContext, parse_ast: *const parse.AST, platfor
             return false;
         },
     }
+}
+
+/// Convert a module name to its corresponding file path.
+/// Supports nested modules: "Foo.Bar" -> "Foo/Bar.roc"
+///
+/// Parameters:
+///   module_name: The module name (e.g., "Hello" or "Foo.Bar")
+///   base_dir: The directory containing the modules
+///   gpa: Allocator for the returned path
+///
+/// Returns: The file path (caller owns memory), or null if file doesn't exist
+fn moduleNameToFilePath(
+    module_name: []const u8,
+    base_dir: []const u8,
+    gpa: std.mem.Allocator,
+) !?[]const u8 {
+    // Replace dots with path separators for nested modules
+    // "Foo.Bar" -> "Foo/Bar"
+    var path_parts = std.ArrayList(u8).empty;
+    defer path_parts.deinit(gpa);
+
+    for (module_name) |ch| {
+        if (ch == '.') {
+            try path_parts.append(gpa, std.fs.path.sep);
+        } else {
+            try path_parts.append(gpa, ch);
+        }
+    }
+    try path_parts.appendSlice(gpa, ".roc");
+
+    const relative_path = try path_parts.toOwnedSlice(gpa);
+    defer gpa.free(relative_path);
+
+    const full_path = try std.fs.path.join(gpa, &.{ base_dir, relative_path });
+
+    // Check if file exists
+    std.fs.cwd().access(full_path, .{}) catch {
+        gpa.free(full_path);
+        return null;
+    };
+
+    return full_path;
 }
 
 /// Extract the names of local modules that a given module file imports.
@@ -2601,6 +2874,10 @@ const SerializedModulesResult = struct {
 ///     When provided, modules in additional_modules whose names match these will have their
 ///     statement_idx set correctly, enabling proper function lookup (e.g., Stdout.line!).
 ///     The order must match: exposed_type_module_names[i] corresponds to additional_modules[i].
+///
+/// platform_env: Optional platform main module environment. When provided (for app modules),
+///     checkPlatformRequirements will be called to validate app exports match platform requirements.
+///     This adds platform requirement types to the app's type store (matching IPC behavior).
 fn compileModuleForSerialization(
     ctx: *CliContext,
     file_path: []const u8,
@@ -2608,6 +2885,7 @@ fn compileModuleForSerialization(
     builtin_modules: *eval.BuiltinModules,
     additional_modules: []*ModuleEnv,
     exposed_type_module_names: ?[]const []const u8,
+    platform_env: ?*const ModuleEnv,
 ) !CompiledModule {
     // Read file into arena (so it lives until serialization)
     const file = std.fs.cwd().openFile(file_path, .{}) catch |err| switch (err) {
@@ -2770,7 +3048,47 @@ fn compileModuleForSerialization(
     var checker = try Check.init(ctx.gpa, &env.types, &env, imported_envs, &check_module_envs_map, &env.store.regions, builtin_ctx);
     defer checker.deinit();
 
+    // Debug: Log before type checking
+    std.debug.print("SERIALIZE BEFORE CHECK: module=\"{s}\" types.len={d}\n", .{ module_name_copy, env.types.len() });
+
     try checker.checkFile();
+
+    // Debug: Log after type checking  
+    std.debug.print("SERIALIZE AFTER CHECK: module=\"{s}\" types.len={d}\n", .{ module_name_copy, env.types.len() });
+
+    // Check platform requirements if this is an app module with a platform
+    // This matches the IPC path behavior and adds platform requirement types to the app's type store
+    if (platform_env) |penv| {
+        // Build the platform-to-app ident translation map (same logic as IPC path)
+        var platform_to_app_idents = std.AutoHashMap(base.Ident.Idx, base.Ident.Idx).init(ctx.gpa);
+        defer platform_to_app_idents.deinit();
+
+        for (penv.requires_types.items.items) |required_type| {
+            const platform_ident_text = penv.getIdent(required_type.ident);
+            if (env.common.findIdent(platform_ident_text)) |app_ident| {
+                try platform_to_app_idents.put(required_type.ident, app_ident);
+            }
+
+            // Also add for-clause type alias names (Model, model) to the translation map
+            const all_aliases = penv.for_clause_aliases.items.items;
+            const type_aliases_slice = all_aliases[@intFromEnum(required_type.type_aliases.start)..][0..required_type.type_aliases.count];
+            for (type_aliases_slice) |alias| {
+                // Add alias name (e.g., "Model") - must exist in app since it's required
+                const alias_name_text = penv.getIdent(alias.alias_name);
+                if (env.common.findIdent(alias_name_text)) |app_ident| {
+                    try platform_to_app_idents.put(alias.alias_name, app_ident);
+                }
+                // Add rigid name (e.g., "model") - insert it into app's ident store since
+                // the rigid name is a platform concept that gets copied during type processing.
+                const rigid_name_text = penv.getIdent(alias.rigid_name);
+                const app_ident = try env.common.insertIdent(ctx.gpa, base.Ident.for_text(rigid_name_text));
+                try platform_to_app_idents.put(alias.rigid_name, app_ident);
+            }
+        }
+
+        try checker.checkPlatformRequirements(penv, &platform_to_app_idents);
+        std.debug.print("SERIALIZE AFTER PLATFORM CHECK: module=\"{s}\" types.len={d}\n", .{ module_name_copy, env.types.len() });
+    }
 
     // Count and render errors from parsing, canonicalization, and type checking
     var error_count: usize = 0;
@@ -2970,6 +3288,7 @@ fn compileAndSerializeModulesForEmbedding(
             &builtin_modules,
             sibling_env_ptrs[0..i],
             sorted_modules[0..i], // Pass type module names for previously compiled siblings
+            null, // No platform requirements check for platform sibling modules
         );
         total_error_count += compiled.error_count;
         compiled_modules.appendAssumeCapacity(compiled);
@@ -2997,11 +3316,102 @@ fn compileAndSerializeModulesForEmbedding(
             &builtin_modules,
             platform_env_ptrs,
             sorted_modules, // Pass type module names so platform main can resolve opaque type methods
+            null, // No platform requirements check for platform main itself
         );
         compiled.is_platform_main = true;
         total_error_count += compiled.error_count;
         primary_env_index = @intCast(compiled_modules.items.len);
         try compiled_modules.append(compiled);
+    }
+
+    // Discover sibling .roc files in the app directory for local module imports
+    // Only considers files starting with uppercase letter (Roc module naming convention)
+    var app_sibling_modules = std.ArrayList([]const u8).empty;
+    defer {
+        for (app_sibling_modules.items) |name| {
+            ctx.gpa.free(name);
+        }
+        app_sibling_modules.deinit(ctx.gpa);
+    }
+
+    const app_basename = std.fs.path.basename(roc_file_path);
+    if (std.fs.cwd().openDir(app_dir, .{ .iterate = true })) |*dir| {
+        defer @constCast(dir).close();
+        var dir_iter = dir.iterate();
+        while (dir_iter.next() catch null) |entry| {
+            if (entry.kind != .file) continue;
+            if (!std.mem.endsWith(u8, entry.name, ".roc")) continue;
+            // Skip the app file itself and main.roc
+            if (std.mem.eql(u8, entry.name, app_basename)) continue;
+            if (std.mem.eql(u8, entry.name, "main.roc")) continue;
+            // Only consider files starting with uppercase (module naming convention)
+            // This skips test files like test_foo.roc, letters_test.roc, etc.
+            if (entry.name.len == 0 or entry.name[0] < 'A' or entry.name[0] > 'Z') continue;
+
+            // Extract module name without .roc extension
+            const module_name = entry.name[0 .. entry.name.len - 4];
+            const owned_name = ctx.gpa.dupe(u8, module_name) catch continue;
+            app_sibling_modules.append(ctx.gpa, owned_name) catch {
+                ctx.gpa.free(owned_name);
+                continue;
+            };
+        }
+    } else |_| {
+        // If we can't open the directory, continue without sibling discovery
+    }
+
+    // Compile app sibling modules (local modules in the app directory)
+    var app_sibling_env_ptrs = try ctx.gpa.alloc(*ModuleEnv, app_sibling_modules.items.len);
+    defer ctx.gpa.free(app_sibling_env_ptrs);
+
+    // Track starting index of sibling modules
+    const sibling_start_index = compiled_modules.items.len;
+
+    for (app_sibling_modules.items, 0..) |module_name, i| {
+        const module_filename = try std.fmt.allocPrint(ctx.gpa, "{s}.roc", .{module_name});
+        defer ctx.gpa.free(module_filename);
+
+        const module_path = try std.fs.path.join(ctx.gpa, &[_][]const u8{ app_dir, module_filename });
+        defer ctx.gpa.free(module_path);
+
+        if (comptime trace_modules) {
+            std.debug.print("[TRACE-MODULES] Compiling app sibling module: {s}\n", .{module_path});
+        }
+
+        // Get all platform module env pointers
+        var all_platform_env_ptrs = try ctx.gpa.alloc(*ModuleEnv, sibling_start_index);
+        defer ctx.gpa.free(all_platform_env_ptrs);
+        for (compiled_modules.items[0..sibling_start_index], 0..) |*m, j| {
+            all_platform_env_ptrs[j] = &m.env;
+        }
+
+        const compiled = compileModuleForSerialization(
+            ctx,
+            module_path,
+            module_name,
+            &builtin_modules,
+            all_platform_env_ptrs,
+            sorted_modules,
+            null, // No platform requirements check for app sibling modules
+        ) catch |err| {
+            std.log.warn("Failed to compile sibling module {s}: {}", .{ module_name, err });
+            app_sibling_env_ptrs[i] = undefined;
+            continue;
+        };
+
+        total_error_count += compiled.error_count;
+        try compiled_modules.append(compiled);
+        app_sibling_env_ptrs[i] = &compiled_modules.items[compiled_modules.items.len - 1].env;
+    }
+
+    // Build type module names including both platform modules and sibling modules
+    var all_type_module_names = try ctx.gpa.alloc([]const u8, sorted_modules.len + app_sibling_modules.items.len);
+    defer ctx.gpa.free(all_type_module_names);
+    for (sorted_modules, 0..) |name, i| {
+        all_type_module_names[i] = name;
+    }
+    for (app_sibling_modules.items, 0..) |name, i| {
+        all_type_module_names[sorted_modules.len + i] = name;
     }
 
     // Compile app module
@@ -3016,13 +3426,20 @@ fn compileAndSerializeModulesForEmbedding(
             all_env_ptrs[i] = &m.env;
         }
 
+        // Get platform main env for checkPlatformRequirements (if platform exists)
+        const platform_main_env: ?*const ModuleEnv = if (has_platform)
+            &compiled_modules.items[primary_env_index].env
+        else
+            null;
+
         var compiled = try compileModuleForSerialization(
             ctx,
             roc_file_path,
             "app",
             &builtin_modules,
             all_env_ptrs,
-            sorted_modules, // Pass type module names in same order as all_env_ptrs
+            all_type_module_names, // Pass all type module names including siblings
+            platform_main_env, // Pass platform env to check requirements (adds types to app's store)
         );
         compiled.is_app = true;
         total_error_count += compiled.error_count;
@@ -3207,6 +3624,9 @@ fn compileAndSerializeModulesForEmbedding(
         const env_offset_before = writer.total_bytes;
         const serialized_env = try writer.appendAlloc(ctx.gpa, ModuleEnv.Serialized);
         module_infos[i].env_serialized_offset = env_offset_before;
+
+        // Debug: Log type store size before serialization
+        std.debug.print("SERIALIZE: module=\"{s}\" types.len={d}\n", .{ m.module_name, m.env.types.len() });
 
         try serialized_env.serialize(&m.env, ctx.gpa, &writer);
     }
